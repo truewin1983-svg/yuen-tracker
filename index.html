@@ -225,7 +225,6 @@ button,input,select,textarea{font-family:inherit}
     <button class="tab" data-tab="calendar" onclick="switchTab('calendar',this)">行事曆</button>
     <button class="tab" data-tab="targets" onclick="switchTab('targets',this)">業績目標</button>
     <button class="tab" data-tab="meetings" onclick="switchTab('meetings',this)">會議記錄</button>
-    <button class="tab" data-tab="training" onclick="switchTab('training',this)">教育訓練</button>
     <button class="tab" data-tab="analytics" onclick="switchTab('analytics',this)">數據分析</button>
     <button class="tab" data-tab="reports" onclick="switchTab('reports',this)">綜合回報</button>
     <button class="tab" data-tab="members" onclick="switchTab('members',this)">成員 · LINE</button>
@@ -305,13 +304,6 @@ button,input,select,textarea{font-family:inherit}
     <div id="meetings-body"><div class="loading">載入中…</div></div>
   </div>
 
-  <!-- ====== TRAINING ====== -->
-  <div id="tab-training" class="section">
-    <div class="toolbar"><div style="font-size:15px;font-weight:700">翔哥教育訓練</div>
-      <button class="btn btn-sm btn-primary" onclick="openModal('training')">+ 教育訓練</button></div>
-    <div id="training-body"><div class="loading">載入中…</div></div>
-  </div>
-
   <!-- ====== ANALYTICS ====== -->
   <div id="tab-analytics" class="section">
     <div class="toolbar"><div style="font-size:15px;font-weight:700">數據分析分享</div>
@@ -386,16 +378,6 @@ button,input,select,textarea{font-family:inherit}
   <div class="row"><label>行動事項（一行一項，格式：事項 @負責人）</label><textarea id="m-actions" placeholder="確認網路安裝 @阿翔&#10;準備開幕物資 @品妤"></textarea></div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('meeting')">取消</button>
     <button class="btn btn-primary" id="btn-meeting" onclick="addMeeting()">儲存</button></div>
-</div></div>
-
-<div class="modal-bg" id="modal-training"><div class="modal">
-  <h3>新增教育訓練資料</h3>
-  <div class="row"><label>標題</label><input id="tr-title" placeholder="例：5月教育訓練 - 銷售技巧"></div>
-  <div class="row2"><div class="row"><label>日期</label><input id="tr-date" type="date"></div>
-    <div class="row"><label>文件網址</label><input id="tr-docurl" placeholder="https://…"></div></div>
-  <div class="row"><label>摘要</label><textarea id="tr-summary" placeholder="訓練重點"></textarea></div>
-  <div class="modal-foot"><button class="btn" onclick="closeModal('training')">取消</button>
-    <button class="btn btn-primary" id="btn-training" onclick="addSimple('training')">新增</button></div>
 </div></div>
 
 <div class="modal-bg" id="modal-analytics"><div class="modal">
@@ -516,7 +498,7 @@ async function apiPost(body,retries){
 async function loadData(){
   setStatus('同步中…','loading');
   const calls={tasks:'getTasks',meetings:'getMeetings',histories:'getHistory',analytics:'getAnalytics',
-    reports:'getReports',targets:'getTargets',trainings:'getTraining',events:'getEvents',members:'getMembers'};
+    reports:'getReports',targets:'getTargets',events:'getEvents',members:'getMembers'};
   const keys=Object.keys(calls);
   const res=await Promise.all(keys.map(k=>jsonp({action:calls[k]}).then(d=>({k,d,ok:true})).catch(()=>({k,ok:false}))));
   let fail=0;
@@ -524,7 +506,7 @@ async function loadData(){
     if(!r.ok){fail++;return;}
     const v=arr(r.d);
     ({tasks:()=>tasks=v,meetings:()=>meetings=v,histories:()=>histories=v,analytics:()=>analytics=v,
-      reports:()=>reports=v,targets:()=>targets=v,trainings:()=>trainings=v,events:()=>events=v,members:()=>members=v}[r.k])();
+      reports:()=>reports=v,targets:()=>targets=v,events:()=>events=v,members:()=>members=v}[r.k])();
   });
   updateStats();updateFilters();renderCurrent();
   const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
@@ -560,7 +542,6 @@ function switchTab(name,el){
 }
 function renderCurrent(){
   ({list:renderList,calendar:renderCalendar,targets:renderTargets,meetings:renderMeetings,
-    training:()=>renderSimple(trainings,'training-body','開啟文件'),
     analytics:()=>renderSimple(analytics,'analytics-body','開啟文件'),
     reports:()=>renderSimple(reports,'reports-body','開啟文件'),
     members:renderMembers}[currentTab]||(()=>{}))();
