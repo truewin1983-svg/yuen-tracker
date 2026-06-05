@@ -481,15 +481,21 @@ function showToast(m){const t=document.getElementById('toast');t.textContent=m;t
 function setStatus(m,s){document.getElementById('sync-text').textContent=m;document.getElementById('dot').className='dot '+(s==='ok'?'dot-ok':s==='err'?'dot-err':'dot-loading');}
 
 /* ===== API ===== */
-function jsonp(params){
+function jsonp(params,retries){
+  retries=(retries==null)?1:retries;
   return new Promise((resolve,reject)=>{
-    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*9999);
-    const timer=setTimeout(()=>{delete window[cb];reject(new Error('timeout'));},15000);
-    window[cb]=d=>{clearTimeout(timer);delete window[cb];resolve(d);};
-    const qs=Object.entries({...params,callback:cb}).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
-    const s=document.createElement('script');s.src=API+'?'+qs;
-    s.onerror=()=>{clearTimeout(timer);delete window[cb];reject(new Error('error'));};
-    document.head.appendChild(s);setTimeout(()=>{try{s.remove();}catch(e){}},20000);
+    function attempt(left){
+      const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*99999);
+      let s;
+      const cleanup=()=>{clearTimeout(timer);delete window[cb];try{s&&s.remove();}catch(e){}};
+      const timer=setTimeout(()=>{cleanup();left>0?attempt(left-1):reject(new Error('timeout'));},15000);
+      window[cb]=d=>{cleanup();resolve(d);};
+      const qs=Object.entries({...params,callback:cb}).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
+      s=document.createElement('script');s.src=API+'?'+qs;
+      s.onerror=()=>{cleanup();left>0?attempt(left-1):reject(new Error('error'));};
+      document.head.appendChild(s);
+    }
+    attempt(retries);
   });
 }
 async function apiPost(body){const r=await fetch(API,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'text/plain'}});return r.json();}
@@ -497,19 +503,22 @@ async function apiPost(body){const r=await fetch(API,{method:'POST',body:JSON.st
 /* ===== load ===== */
 async function loadData(){
   setStatus('同步中…','loading');
-  try{
-    const [t,m,h,a,r,tg,tr,ev,mb]=await Promise.all([
-      jsonp({action:'getTasks'}),jsonp({action:'getMeetings'}),jsonp({action:'getHistory'}),
-      jsonp({action:'getAnalytics'}),jsonp({action:'getReports'}),jsonp({action:'getTargets'}),
-      jsonp({action:'getTraining'}),
-      jsonp({action:'getEvents'}).catch(()=>[]),
-      jsonp({action:'getMembers'}).catch(()=>[])
-    ]);
-    tasks=arr(t);meetings=arr(m);histories=arr(h);analytics=arr(a);reports=arr(r);
-    targets=arr(tg);trainings=arr(tr);events=arr(ev);members=arr(mb);
-    updateStats();updateFilters();renderCurrent();
-    setStatus('已同步 · '+new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}),'ok');
-  }catch(e){setStatus('連線失敗，點重新整理','err');}
+  const calls={tasks:'getTasks',meetings:'getMeetings',histories:'getHistory',analytics:'getAnalytics',
+    reports:'getReports',targets:'getTargets',trainings:'getTraining',events:'getEvents',members:'getMembers'};
+  const keys=Object.keys(calls);
+  const res=await Promise.all(keys.map(k=>jsonp({action:calls[k]}).then(d=>({k,d,ok:true})).catch(()=>({k,ok:false}))));
+  let fail=0;
+  res.forEach(r=>{
+    if(!r.ok){fail++;return;}
+    const v=arr(r.d);
+    ({tasks:()=>tasks=v,meetings:()=>meetings=v,histories:()=>histories=v,analytics:()=>analytics=v,
+      reports:()=>reports=v,targets:()=>targets=v,trainings:()=>trainings=v,events:()=>events=v,members:()=>members=v}[r.k])();
+  });
+  updateStats();updateFilters();renderCurrent();
+  const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+  if(fail===0)setStatus('已同步 · '+tm,'ok');
+  else if(fail<keys.length)setStatus('已同步 · '+tm,'ok');
+  else setStatus('連線失敗，點重新整理','err');
 }
 function arr(x){return Array.isArray(x)?x:[];}
 
