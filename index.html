@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="昱恩追蹤">
+<meta name="theme-color" content="#16233a">
+<link rel="manifest" href="manifest.json">
+<title>昱恩-內部追蹤工具</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#f5f6f8; --panel:#ffffff; --ink:#1b2333; --muted:#7c8493; --line:#e8ebef;
+  --ink-soft:#5a6373; --accent:#2f6f6a; --accent-soft:#e4f0ef;
+  --blue:#1f6feb; --blue-bg:#e7f0fd; --amber:#b4670b; --amber-bg:#fbf0dc;
+  --green:#1f7a37; --green-bg:#e6f3e8; --red:#a5371d; --red-bg:#fbe9e4; --purple:#5b4bc4; --purple-bg:#ecebfb;
+  --radius:14px; --shadow:0 1px 2px rgba(20,30,50,.04),0 4px 16px rgba(20,30,50,.05);
+  --safe-b:env(safe-area-inset-bottom,0px);
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Noto Sans TC',-apple-system,BlinkMacSystemFont,'PingFang TC','Microsoft JhengHei',sans-serif;
+  background:var(--bg);color:var(--ink);min-height:100vh;-webkit-font-smoothing:antialiased;font-size:14px;line-height:1.5}
+button,input,select,textarea{font-family:inherit}
+
+/* ---------- top bar ---------- */
+.topbar{background:var(--panel);border-bottom:1px solid var(--line);padding:12px 16px;
+  position:sticky;top:0;z-index:60;display:flex;align-items:center;justify-content:space-between;gap:10px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:16px;letter-spacing:.2px}
+.brand .logo{width:30px;height:30px;border-radius:9px;background:var(--ink);color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:700}
+.sync{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--muted);font-weight:400}
+.dot{width:7px;height:7px;border-radius:50%;display:inline-block}
+.dot-ok{background:var(--green)}.dot-err{background:var(--red)}.dot-loading{background:var(--amber);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* ---------- tab strip ---------- */
+.tabwrap{background:var(--panel);border-bottom:1px solid var(--line);position:sticky;top:55px;z-index:55}
+.tabs{display:flex;gap:2px;max-width:1120px;margin:0 auto;padding:0 10px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{padding:11px 14px;font-size:13.5px;color:var(--muted);background:none;border:none;cursor:pointer;
+  border-bottom:2.5px solid transparent;white-space:nowrap;font-weight:500;flex-shrink:0}
+.tab.active{color:var(--ink);border-bottom-color:var(--ink);font-weight:700}
+.tab:hover:not(.active){color:var(--ink-soft)}
+
+.container{max-width:1120px;margin:0 auto;padding:16px 14px calc(28px + var(--safe-b))}
+.section{display:none;animation:fade .2s ease}
+.section.active{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
+
+/* ---------- buttons ---------- */
+.btn{padding:8px 14px;font-size:13px;border:1px solid var(--line);border-radius:10px;background:var(--panel);
+  cursor:pointer;color:var(--ink);font-weight:500;transition:.12s;display:inline-flex;align-items:center;gap:6px}
+.btn:hover{background:#f0f2f5}
+.btn:active{transform:scale(.97)}
+.btn-primary{background:var(--ink);color:#fff;border-color:var(--ink)}
+.btn-primary:hover{background:#2a3650}
+.btn-sm{padding:6px 11px;font-size:12.5px;border-radius:9px}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--muted)}
+.btn-ghost:hover{background:#eef0f3;color:var(--ink)}
+.btn-danger{color:var(--red);border-color:#f0cfc6;background:var(--panel)}
+.btn-danger:hover{background:var(--red-bg)}
+
+/* ---------- stats ---------- */
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
+@media(max-width:560px){.stat-grid{grid-template-columns:repeat(2,1fr)}}
+.stat-card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:13px 15px;box-shadow:var(--shadow)}
+.stat-label{font-size:12px;color:var(--muted);margin-bottom:5px}
+.stat-value{font-size:24px;font-weight:700;line-height:1}
+
+/* ---------- toolbar / filters ---------- */
+.toolbar{display:flex;gap:8px;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap}
+.toolbar-actions{display:flex;gap:8px;flex-wrap:wrap}
+.filters{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center}
+.filters input,.filters select{font-size:13px;padding:8px 10px;border:1px solid var(--line);border-radius:10px;background:var(--panel);color:var(--ink)}
+.filters input{flex:1;min-width:130px}
+.field-icon{position:relative;flex:1;min-width:140px;display:flex}
+.field-icon input{width:100%}
+
+/* ---------- responsive task list (table on desktop, cards on mobile) ---------- */
+.tlist{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.thead,.trow{display:grid;grid-template-columns:1.7fr .9fr .8fr .8fr .6fr .9fr .9fr .9fr 1.6fr 56px 40px;align-items:center;gap:8px}
+.thead{padding:10px 14px;background:#fafbfc;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--muted);font-weight:600}
+.trow{padding:9px 14px;border-bottom:1px solid #f1f3f5;font-size:13px}
+.trow:last-child{border-bottom:none}
+.trow:hover{background:#fafbfc}
+.trow.done .t-title-input{text-decoration:line-through;color:var(--muted)}
+.cell-label{display:none}
+.inp{border:1px solid transparent;background:transparent;font-size:13px;color:inherit;width:100%;padding:5px 7px;border-radius:8px;font-family:inherit}
+.inp:hover{background:#eef0f3}
+.inp:focus{outline:none;border-color:var(--ink);background:#fff}
+.sel{border:1px solid transparent;background:transparent;font-size:12.5px;cursor:pointer;padding:5px 6px;border-radius:8px;color:inherit;width:100%}
+.sel:hover{background:#eef0f3}
+.sel:focus{outline:none;border-color:var(--ink);background:#fff}
+.x-btn{background:none;border:none;color:var(--muted);cursor:pointer;font-size:15px;padding:4px;border-radius:7px;line-height:1}
+.x-btn:hover{background:var(--red-bg);color:var(--red)}
+
+.badge{display:inline-block;font-size:11.5px;padding:3px 9px;border-radius:99px;font-weight:600;white-space:nowrap}
+.b-blue{background:var(--blue-bg);color:var(--blue)}
+.b-amber{background:var(--amber-bg);color:var(--amber)}
+.b-green{background:var(--green-bg);color:var(--green)}
+.b-red{background:var(--red-bg);color:var(--red)}
+.b-purple{background:var(--purple-bg);color:var(--purple)}
+.b-cat{background:#eef0f3;color:var(--ink-soft);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+.person{display:flex;align-items:center;gap:6px;min-width:0}
+.person span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.avatar{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
+.hist-btn{font-size:11.5px;padding:4px 9px;color:var(--purple);border:1px solid #d8d4f5;border-radius:8px;background:var(--purple-bg);cursor:pointer;white-space:nowrap}
+.hist-btn:hover{background:#e0ddf7}
+
+@media(max-width:860px){
+  .thead{display:none}
+  .tlist{background:transparent;border:none;box-shadow:none;display:flex;flex-direction:column;gap:10px}
+  .trow{display:block;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+    padding:13px 14px;box-shadow:var(--shadow);position:relative}
+  .trow>div{margin-bottom:2px}
+  .trow .cell{display:flex;align-items:center;gap:8px;padding:4px 0;border-bottom:1px dashed #f0f2f5}
+  .trow .cell:last-child{border-bottom:none}
+  .cell-label{display:inline-block;font-size:11.5px;color:var(--muted);width:64px;flex-shrink:0;font-weight:500}
+  .cell-title{margin-bottom:6px}
+  .cell-title .inp{font-size:15px;font-weight:600;padding:2px 4px}
+  .trow .x-btn{position:absolute;top:10px;right:10px}
+  .inp:hover,.sel:hover{background:#eef0f3}
+}
+
+/* ---------- generic cards (meetings/training/etc) ---------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px 17px;margin-bottom:10px;box-shadow:var(--shadow)}
+.card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
+.card-title{font-size:15px;font-weight:700}
+.card-date{font-size:12px;color:var(--muted);margin-top:2px}
+.card-summary{font-size:13px;color:var(--ink-soft);margin-top:8px;line-height:1.6;white-space:pre-wrap}
+.doc-link{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:var(--blue);text-decoration:none;
+  padding:6px 11px;border:1px solid #c4dbfb;border-radius:9px;background:var(--blue-bg);white-space:nowrap;font-weight:500}
+.doc-link:hover{background:#d6e6fc}
+.action-item{display:flex;align-items:flex-start;gap:9px;padding:7px 0;border-bottom:1px solid #f1f3f5;font-size:13px}
+.action-item:last-child{border-bottom:none}
+.check{width:18px;height:18px;border:1.5px solid #cdd3db;border-radius:5px;flex-shrink:0;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;font-size:11px;margin-top:1px;transition:.12s}
+.check.on{background:var(--ink);border-color:var(--ink);color:#fff}
+
+/* ---------- calendar ---------- */
+.cal-bar{display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;gap:10px;flex-wrap:wrap}
+.cal-nav{display:flex;align-items:center;gap:8px}
+.cal-month{font-size:18px;font-weight:700;min-width:130px;text-align:center}
+.cal-grid{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
+.cal-week{display:grid;grid-template-columns:repeat(7,1fr)}
+.cal-dowrow{background:#fafbfc;border-bottom:1px solid var(--line)}
+.cal-dow{text-align:center;padding:9px 0;font-size:12px;color:var(--muted);font-weight:600}
+.cal-dow:first-child,.cal-dow:last-child{color:var(--red)}
+.cal-cell{min-height:96px;border-right:1px solid #f1f3f5;border-bottom:1px solid #f1f3f5;padding:6px 6px;cursor:pointer;position:relative;transition:.1s}
+.cal-cell:hover{background:#fafbfc}
+.cal-cell.other{background:#fcfcfd}
+.cal-cell.other .cal-num{color:#c4cad3}
+.cal-num{font-size:12.5px;font-weight:600;color:var(--ink-soft);display:inline-flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:50%}
+.cal-cell.today .cal-num{background:var(--ink);color:#fff}
+.cal-ev{font-size:11px;padding:2px 6px;border-radius:6px;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:500;cursor:pointer}
+.cal-more{font-size:10.5px;color:var(--muted);margin-top:2px;padding-left:2px}
+@media(max-width:640px){
+  .cal-cell{min-height:64px;padding:4px 3px}
+  .cal-num{width:20px;height:20px;font-size:11px}
+  .cal-ev{font-size:9.5px;padding:1px 4px}
+  .cal-dow{font-size:11px;padding:7px 0}
+}
+.legend{display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;font-size:12px;color:var(--muted)}
+.legend span{display:inline-flex;align-items:center;gap:5px}
+.legend i{width:10px;height:10px;border-radius:3px;display:inline-block}
+
+/* ---------- empty / loading ---------- */
+.empty,.loading{font-size:13px;color:var(--muted);text-align:center;padding:36px 0}
+
+/* ---------- modal ---------- */
+.modal-bg{display:none;position:fixed;inset:0;background:rgba(15,22,38,.45);z-index:100;
+  align-items:flex-start;justify-content:center;padding:20px 14px calc(20px + var(--safe-b));overflow-y:auto;backdrop-filter:blur(2px)}
+.modal-bg.open{display:flex}
+.modal{background:var(--panel);border-radius:18px;padding:20px;width:100%;max-width:480px;box-shadow:0 20px 60px rgba(15,22,38,.25);animation:pop .18s ease}
+@keyframes pop{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+.modal h3{font-size:17px;font-weight:700;margin-bottom:16px}
+.row{margin-bottom:13px}
+.row label{display:block;font-size:12px;color:var(--ink-soft);margin-bottom:5px;font-weight:500}
+.row input,.row select,.row textarea{width:100%;font-size:15px;padding:10px 12px;border:1px solid var(--line);border-radius:11px;background:var(--panel);color:var(--ink);outline:none}
+.row input:focus,.row select:focus,.row textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
+.row textarea{resize:vertical;min-height:70px;line-height:1.55}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+.modal-foot{display:flex;justify-content:flex-end;gap:9px;margin-top:6px}
+.toggle{display:flex;align-items:center;gap:10px;background:#f6f7f9;border:1px solid var(--line);border-radius:11px;padding:11px 13px}
+.toggle-info{flex:1}
+.toggle-info b{font-size:13.5px;display:block}
+.toggle-info small{font-size:11.5px;color:var(--muted)}
+.switch{position:relative;width:42px;height:24px;flex-shrink:0}
+.switch input{opacity:0;width:0;height:0}
+.slider{position:absolute;inset:0;background:#cdd3db;border-radius:99px;cursor:pointer;transition:.2s}
+.slider:before{content:"";position:absolute;width:18px;height:18px;left:3px;top:3px;background:#fff;border-radius:50%;transition:.2s}
+.switch input:checked+.slider{background:var(--green)}
+.switch input:checked+.slider:before{transform:translateX(18px)}
+
+.history-box{max-height:280px;overflow-y:auto;margin-bottom:13px}
+.history-item{padding:9px 0;border-bottom:1px solid #f1f3f5;font-size:13px}
+.history-item:last-child{border-bottom:none}
+.history-item .d{color:var(--muted);font-size:11px;margin-bottom:2px}
+
+.hint{font-size:12px;color:var(--ink-soft);background:#f6f7f9;border:1px solid var(--line);border-radius:11px;padding:11px 13px;line-height:1.6;margin-bottom:13px}
+.hint b{color:var(--ink)}
+
+.toast{position:fixed;left:50%;transform:translateX(-50%) translateY(20px);bottom:calc(22px + var(--safe-b));
+  background:var(--ink);color:#fff;padding:11px 20px;border-radius:11px;font-size:13.5px;font-weight:500;
+  opacity:0;transition:.25s;pointer-events:none;z-index:200;box-shadow:0 8px 24px rgba(0,0,0,.2)}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+
+.pill-tag{display:inline-block;font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
+.tg-table{width:100%;border-collapse:collapse}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand"><span class="logo">昱</span>昱恩 · 內部追蹤</div>
+  <div class="sync"><span class="dot dot-loading" id="dot"></span><span id="sync-text">連線中…</span></div>
+</div>
+
+<div class="tabwrap">
+  <div class="tabs" id="tabs">
+    <button class="tab active" data-tab="list" onclick="switchTab('list',this)">任務清單</button>
+    <button class="tab" data-tab="calendar" onclick="switchTab('calendar',this)">行事曆</button>
+    <button class="tab" data-tab="targets" onclick="switchTab('targets',this)">業績目標</button>
+    <button class="tab" data-tab="meetings" onclick="switchTab('meetings',this)">會議記錄</button>
+    <button class="tab" data-tab="training" onclick="switchTab('training',this)">教育訓練</button>
+    <button class="tab" data-tab="analytics" onclick="switchTab('analytics',this)">數據分析</button>
+    <button class="tab" data-tab="reports" onclick="switchTab('reports',this)">綜合回報</button>
+    <button class="tab" data-tab="members" onclick="switchTab('members',this)">成員 · LINE</button>
+  </div>
+</div>
+
+<div class="container">
+
+  <!-- ====== TASKS ====== -->
+  <div id="tab-list" class="section active">
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-label">全部任務</div><div class="stat-value" id="s-total">–</div></div>
+      <div class="stat-card"><div class="stat-label">進行中</div><div class="stat-value" style="color:var(--amber)" id="s-doing">–</div></div>
+      <div class="stat-card"><div class="stat-label">待處理</div><div class="stat-value" style="color:var(--blue)" id="s-todo">–</div></div>
+      <div class="stat-card"><div class="stat-label">已完成</div><div class="stat-value" style="color:var(--green)" id="s-done">–</div></div>
+    </div>
+    <div class="toolbar">
+      <div style="font-size:15px;font-weight:700">任務清單</div>
+      <div class="toolbar-actions">
+        <button class="btn btn-sm" onclick="loadData()">↻ 重新整理</button>
+        <button class="btn btn-sm btn-primary" onclick="openModal('task')">+ 新任務</button>
+      </div>
+    </div>
+    <div class="filters">
+      <div class="field-icon"><input id="search" placeholder="🔍 搜尋任務…" oninput="renderList()"></div>
+      <select id="f-member" onchange="renderList()"><option value="">全部成員</option></select>
+      <select id="f-cat" onchange="renderList()"><option value="">全部專案</option></select>
+      <select id="f-pri" onchange="renderList()"><option value="">全部優先度</option><option>高</option><option>中</option><option>低</option></select>
+      <select id="f-status" onchange="renderList()"><option value="">全部狀態</option><option>待處理</option><option>進行中</option><option>完成</option></select>
+    </div>
+    <div class="tlist">
+      <div class="thead">
+        <div>任務名稱</div><div>專案</div><div>負責人</div><div>執行人</div><div>優先</div>
+        <div>狀態</div><div>截止</div><div>完成</div><div>備註／進度</div><div>歷史</div><div></div>
+      </div>
+      <div id="task-body"><div class="loading">載入中…</div></div>
+    </div>
+  </div>
+
+  <!-- ====== CALENDAR ====== -->
+  <div id="tab-calendar" class="section">
+    <div class="toolbar">
+      <div style="font-size:15px;font-weight:700">行事曆 · 重要日子</div>
+      <button class="btn btn-sm btn-primary" onclick="openEventModal()">+ 新增記事</button>
+    </div>
+    <div class="cal-bar">
+      <div class="cal-nav">
+        <button class="btn btn-sm" onclick="calShift(-1)">‹</button>
+        <div class="cal-month" id="cal-month"></div>
+        <button class="btn btn-sm" onclick="calShift(1)">›</button>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="calToday()">回到今天</button>
+    </div>
+    <div class="cal-grid">
+      <div class="cal-week cal-dowrow">
+        <div class="cal-dow">日</div><div class="cal-dow">一</div><div class="cal-dow">二</div>
+        <div class="cal-dow">三</div><div class="cal-dow">四</div><div class="cal-dow">五</div><div class="cal-dow">六</div>
+      </div>
+      <div id="cal-body"></div>
+    </div>
+    <div class="legend" id="cal-legend"></div>
+  </div>
+
+  <!-- ====== TARGETS ====== -->
+  <div id="tab-targets" class="section">
+    <div class="toolbar">
+      <div style="font-size:15px;font-weight:700">業績目標追蹤</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('target')">+ 業績目標</button>
+    </div>
+    <div id="targets-body"><div class="loading">載入中…</div></div>
+  </div>
+
+  <!-- ====== MEETINGS ====== -->
+  <div id="tab-meetings" class="section">
+    <div class="toolbar"><div style="font-size:15px;font-weight:700">會議記錄</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('meeting')">+ 會議記錄</button></div>
+    <div id="meetings-body"><div class="loading">載入中…</div></div>
+  </div>
+
+  <!-- ====== TRAINING ====== -->
+  <div id="tab-training" class="section">
+    <div class="toolbar"><div style="font-size:15px;font-weight:700">翔哥教育訓練</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('training')">+ 教育訓練</button></div>
+    <div id="training-body"><div class="loading">載入中…</div></div>
+  </div>
+
+  <!-- ====== ANALYTICS ====== -->
+  <div id="tab-analytics" class="section">
+    <div class="toolbar"><div style="font-size:15px;font-weight:700">數據分析分享</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('analytics')">+ 數據分析</button></div>
+    <div id="analytics-body"><div class="loading">載入中…</div></div>
+  </div>
+
+  <!-- ====== REPORTS ====== -->
+  <div id="tab-reports" class="section">
+    <div class="toolbar"><div style="font-size:15px;font-weight:700">綜合回報區</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('reports')">+ 綜合回報</button></div>
+    <div id="reports-body"><div class="loading">載入中…</div></div>
+  </div>
+
+  <!-- ====== MEMBERS ====== -->
+  <div id="tab-members" class="section">
+    <div class="toolbar"><div style="font-size:15px;font-weight:700">成員 · LINE 通知設定</div>
+      <button class="btn btn-sm btn-primary" onclick="openModal('member')">+ 新增成員</button></div>
+    <div class="hint" id="bind-hint"></div>
+    <div id="members-body"><div class="loading">載入中…</div></div>
+  </div>
+
+</div>
+
+<!-- ============ MODALS ============ -->
+<div class="modal-bg" id="modal-task"><div class="modal">
+  <h3>新增任務</h3>
+  <div class="row"><label>任務名稱</label><input id="t-title" placeholder="請輸入任務名稱"></div>
+  <div class="row2">
+    <div class="row"><label>專案分類</label><input id="t-category" list="dl-cat" placeholder="選擇或輸入"><datalist id="dl-cat"></datalist></div>
+    <div class="row"><label>負責人</label><input id="t-member" list="dl-people" placeholder="擔當者"><datalist id="dl-people"></datalist></div>
+  </div>
+  <div class="row"><label>執行人</label><input id="t-executor" list="dl-people" placeholder="實際落實者"></div>
+  <div class="row2">
+    <div class="row"><label>優先度</label><select id="t-priority"><option>高</option><option selected>中</option><option>低</option></select></div>
+    <div class="row"><label>狀態</label><select id="t-status"><option>待處理</option><option>進行中</option><option>完成</option></select></div>
+  </div>
+  <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
+  <div class="row"><label>備註／進度說明</label><textarea id="t-note" placeholder="目前進度或補充"></textarea></div>
+  <div class="toggle">
+    <div class="toggle-info"><b>📲 LINE 通知負責人 / 執行人</b><small>新增後推播給已綁定 LINE 的人</small></div>
+    <label class="switch"><input type="checkbox" id="t-notify" checked><span class="slider"></span></label>
+  </div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('task')">取消</button>
+    <button class="btn btn-primary" id="btn-task" onclick="addTask()">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-event"><div class="modal">
+  <h3 id="event-modal-title">新增記事</h3>
+  <input type="hidden" id="e-id">
+  <div class="row"><label>日期</label><input id="e-date" type="date"></div>
+  <div class="row"><label>內容</label><input id="e-title" placeholder="例：A同事休假 / 新品上市"></div>
+  <div class="row2">
+    <div class="row"><label>分類</label><select id="e-type" onchange="syncEventColor()">
+      <option value="休假">休假</option><option value="上市">新品 / 上市</option><option value="活動">活動</option>
+      <option value="提醒">提醒</option><option value="其他">其他</option></select></div>
+    <div class="row"><label>相關人員（可空）</label><input id="e-person" placeholder="例：Emily"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn btn-danger" id="btn-event-del" style="display:none;margin-right:auto" onclick="deleteEvent()">刪除</button>
+    <button class="btn" onclick="closeModal('event')">取消</button>
+    <button class="btn btn-primary" id="btn-event" onclick="saveEvent()">儲存</button>
+  </div>
+</div></div>
+
+<div class="modal-bg" id="modal-meeting"><div class="modal">
+  <h3>新增會議記錄</h3>
+  <div class="row"><label>會議名稱</label><input id="m-title" placeholder="例：樂華店開幕籌備會"></div>
+  <div class="row2"><div class="row"><label>日期</label><input id="m-date" type="date"></div>
+    <div class="row"><label>Google 文件網址</label><input id="m-docurl" placeholder="https://docs.google.com/…"></div></div>
+  <div class="row"><label>摘要</label><textarea id="m-summary" placeholder="會議重點"></textarea></div>
+  <div class="row"><label>行動事項（一行一項，格式：事項 @負責人）</label><textarea id="m-actions" placeholder="確認網路安裝 @阿翔&#10;準備開幕物資 @品妤"></textarea></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('meeting')">取消</button>
+    <button class="btn btn-primary" id="btn-meeting" onclick="addMeeting()">儲存</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-training"><div class="modal">
+  <h3>新增教育訓練資料</h3>
+  <div class="row"><label>標題</label><input id="tr-title" placeholder="例：5月教育訓練 - 銷售技巧"></div>
+  <div class="row2"><div class="row"><label>日期</label><input id="tr-date" type="date"></div>
+    <div class="row"><label>文件網址</label><input id="tr-docurl" placeholder="https://…"></div></div>
+  <div class="row"><label>摘要</label><textarea id="tr-summary" placeholder="訓練重點"></textarea></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('training')">取消</button>
+    <button class="btn btn-primary" id="btn-training" onclick="addSimple('training')">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-analytics"><div class="modal">
+  <h3>新增數據分析分享</h3>
+  <div class="row"><label>標題</label><input id="a-title" placeholder="例：4月 Ocard 數據分析"></div>
+  <div class="row2"><div class="row"><label>日期</label><input id="a-date" type="date"></div>
+    <div class="row"><label>文件網址</label><input id="a-docurl" placeholder="https://…"></div></div>
+  <div class="row"><label>摘要</label><textarea id="a-summary" placeholder="分析重點"></textarea></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('analytics')">取消</button>
+    <button class="btn btn-primary" id="btn-analytics" onclick="addSimple('analytics')">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-reports"><div class="modal">
+  <h3>新增綜合回報</h3>
+  <div class="row"><label>標題</label><input id="r-title" placeholder="例：週報 4/15"></div>
+  <div class="row2"><div class="row"><label>日期</label><input id="r-date" type="date"></div>
+    <div class="row"><label>文件網址</label><input id="r-docurl" placeholder="https://…"></div></div>
+  <div class="row"><label>摘要</label><textarea id="r-summary" placeholder="回報重點"></textarea></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('reports')">取消</button>
+    <button class="btn btn-primary" id="btn-reports" onclick="addSimple('reports')">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-target"><div class="modal">
+  <h3>新增業績目標</h3>
+  <div class="row2"><div class="row"><label>品牌</label><input id="tg-brand" placeholder="例：初韻"></div>
+    <div class="row"><label>負責人</label><input id="tg-person" placeholder="例：Emily"></div></div>
+  <div class="row"><label>店名</label><input id="tg-store" placeholder="例：基隆廟口店"></div>
+  <div class="row"><label>月份</label><input id="tg-month" placeholder="例：2026/05"></div>
+  <div class="row2"><div class="row"><label>該月目標</label><input id="tg-target" type="number" placeholder="0"></div>
+    <div class="row"><label>目前進度</label><input id="tg-progress" type="number" placeholder="0"></div></div>
+  <div class="row"><label>本月獎金金額</label><input id="tg-bonus" type="number" placeholder="0"></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('target')">取消</button>
+    <button class="btn btn-primary" id="btn-target" onclick="addTarget()">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-member"><div class="modal">
+  <h3>新增成員</h3>
+  <div class="row"><label>姓名（要跟任務的負責人 / 執行人一致）</label><input id="mb-name" placeholder="例：阿翔"></div>
+  <div class="hint">新增後，請該成員加官方帳號好友，並在 LINE 對話框輸入<b>自己的姓名</b>即可自動完成綁定。</div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('member')">取消</button>
+    <button class="btn btn-primary" id="btn-member" onclick="addMember()">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-history"><div class="modal">
+  <h3 id="history-title">修改記錄</h3>
+  <div class="history-box" id="history-body"></div>
+  <div class="row"><label>新增修改說明</label><textarea id="history-input" placeholder="例：4.18 改由翔哥出席會議" style="min-height:58px"></textarea></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('history')">關閉</button>
+    <button class="btn btn-primary" id="btn-history" onclick="submitHistory()">新增記錄</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-confirm"><div class="modal">
+  <h3>確認刪除</h3>
+  <p style="font-size:14px;color:var(--ink-soft);margin-bottom:18px">確定要刪除「<span id="confirm-title"></span>」嗎？此操作無法復原。</p>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('confirm')">取消</button>
+    <button class="btn btn-danger" onclick="confirmDelete()">確認刪除</button></div>
+</div></div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+/* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
+const API='https://script.google.com/macros/s/AKfycbyrdi1iyX4342FwLl2c_SyrSH9dY4yVlqDToXS34yJEDeI1bDn8mfYwB-brn8yZFdPANg/exec';
+
+/* ===== state ===== */
+let tasks=[],meetings=[],histories=[],analytics=[],reports=[],targets=[],trainings=[],events=[],members=[];
+let currentTab='list',pendingDelete=null,curHistoryId=null,saveTimer={};
+let calY,calM; // calendar year / month
+const COLORS=['#1f6feb','#1f7a37','#a5371d','#5b4bc4','#0f766e','#b4670b'];
+const MC={};let ci=0;
+const EVENT_COLORS={'休假':'#b4670b','上市':'#1f7a37','活動':'#1f6feb','提醒':'#a5371d','其他':'#5b6573'};
+const EVENT_BG={'休假':'#fbf0dc','上市':'#e6f3e8','活動':'#e7f0fd','提醒':'#fbe9e4','其他':'#eef0f3'};
+
+/* ===== helpers ===== */
+function mc(n){if(!n)return'#7c8493';if(!MC[n])MC[n]=COLORS[ci++%COLORS.length];return MC[n];}
+function avatar(n){if(!n)return'';const c=mc(n);return`<span class="avatar" style="background:${c}1f;color:${c}">${n[0]}</span>`;}
+function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function jsAttr(s){return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
+function priBadge(p){const m={'高':'b-red','中':'b-amber','低':'b-green'};return`<span class="badge ${m[p]||'b-amber'}">${p||'中'}</span>`;}
+function fmtDate(d){if(!d)return'';const s=String(d);if(s.includes('T')){const dt=new Date(s);if(!isNaN(dt))return dt.getFullYear()+'/'+String(dt.getMonth()+1).padStart(2,'0')+'/'+String(dt.getDate()).padStart(2,'0');}return s.slice(0,10).replace(/-/g,'/');}
+function toISO(d){if(!d)return'';const s=String(d);if(s.includes('T')){const dt=new Date(s);if(!isNaN(dt))return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');}return s.slice(0,10).replace(/\//g,'-');}
+function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
+function setStatus(m,s){document.getElementById('sync-text').textContent=m;document.getElementById('dot').className='dot '+(s==='ok'?'dot-ok':s==='err'?'dot-err':'dot-loading');}
+
+/* ===== API ===== */
+function jsonp(params){
+  return new Promise((resolve,reject)=>{
+    const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*9999);
+    const timer=setTimeout(()=>{delete window[cb];reject(new Error('timeout'));},15000);
+    window[cb]=d=>{clearTimeout(timer);delete window[cb];resolve(d);};
+    const qs=Object.entries({...params,callback:cb}).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
+    const s=document.createElement('script');s.src=API+'?'+qs;
+    s.onerror=()=>{clearTimeout(timer);delete window[cb];reject(new Error('error'));};
+    document.head.appendChild(s);setTimeout(()=>{try{s.remove();}catch(e){}},20000);
+  });
+}
+async function apiPost(body){const r=await fetch(API,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'text/plain'}});return r.json();}
+
+/* ===== load ===== */
+async function loadData(){
+  setStatus('同步中…','loading');
+  try{
+    const [t,m,h,a,r,tg,tr,ev,mb]=await Promise.all([
+      jsonp({action:'getTasks'}),jsonp({action:'getMeetings'}),jsonp({action:'getHistory'}),
+      jsonp({action:'getAnalytics'}),jsonp({action:'getReports'}),jsonp({action:'getTargets'}),
+      jsonp({action:'getTraining'}),
+      jsonp({action:'getEvents'}).catch(()=>[]),
+      jsonp({action:'getMembers'}).catch(()=>[])
+    ]);
+    tasks=arr(t);meetings=arr(m);histories=arr(h);analytics=arr(a);reports=arr(r);
+    targets=arr(tg);trainings=arr(tr);events=arr(ev);members=arr(mb);
+    updateStats();updateFilters();renderCurrent();
+    setStatus('已同步 · '+new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'}),'ok');
+  }catch(e){setStatus('連線失敗，點重新整理','err');}
+}
+function arr(x){return Array.isArray(x)?x:[];}
+
+function updateStats(){
+  document.getElementById('s-total').textContent=tasks.length;
+  document.getElementById('s-doing').textContent=tasks.filter(t=>t.status==='進行中').length;
+  document.getElementById('s-todo').textContent=tasks.filter(t=>t.status==='待處理').length;
+  document.getElementById('s-done').textContent=tasks.filter(t=>t.status==='完成').length;
+}
+function updateFilters(){
+  const people=[...new Set([...tasks.map(t=>t.member),...tasks.map(t=>t.executor),...members.map(m=>m.name)].filter(Boolean))];
+  const cats=[...new Set(tasks.map(t=>t.category).filter(Boolean))];
+  const mSel=document.getElementById('f-member');const cm=mSel.value;
+  mSel.innerHTML='<option value="">全部成員</option>'+people.map(p=>`<option${p===cm?' selected':''}>${esc(p)}</option>`).join('');
+  const cSel=document.getElementById('f-cat');const cc=cSel.value;
+  cSel.innerHTML='<option value="">全部專案</option>'+cats.map(c=>`<option${c===cc?' selected':''}>${esc(c)}</option>`).join('');
+  document.getElementById('dl-cat').innerHTML=cats.map(c=>`<option value="${esc(c)}">`).join('');
+  document.getElementById('dl-people').innerHTML=people.map(p=>`<option value="${esc(p)}">`).join('');
+}
+
+/* ===== tab switch ===== */
+function switchTab(name,el){
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.querySelectorAll('.section').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');document.getElementById('tab-'+name).classList.add('active');
+  currentTab=name;renderCurrent();
+}
+function renderCurrent(){
+  ({list:renderList,calendar:renderCalendar,targets:renderTargets,meetings:renderMeetings,
+    training:()=>renderSimple(trainings,'training-body','開啟文件'),
+    analytics:()=>renderSimple(analytics,'analytics-body','開啟文件'),
+    reports:()=>renderSimple(reports,'reports-body','開啟文件'),
+    members:renderMembers}[currentTab]||(()=>{}))();
+}
+
+/* ===== TASK list ===== */
+function getFiltered(){
+  const q=(document.getElementById('search').value||'').toLowerCase();
+  const fm=document.getElementById('f-member').value,fc=document.getElementById('f-cat').value;
+  const fp=document.getElementById('f-pri').value,fs=document.getElementById('f-status').value;
+  return tasks.filter(t=>(!q||(t.title||'').toLowerCase().includes(q)||(t.note||'').toLowerCase().includes(q))
+    &&(!fm||t.member===fm||t.executor===fm)&&(!fc||t.category===fc)&&(!fp||t.priority===fp)&&(!fs||t.status===fs));
+}
+function histOf(id){return histories.filter(h=>String(h.taskId)===String(id));}
+function renderList(){
+  const f=getFiltered(),b=document.getElementById('task-body');
+  if(!f.length){b.innerHTML='<div class="empty">沒有符合的任務</div>';return;}
+  b.innerHTML=f.map(t=>{
+    const done=t.status==='完成',hc=histOf(t.id).length,id=jsAttr(t.id),tt=jsAttr(t.title);
+    const statusSel=`<select class="sel" onchange="inlineUpdate('${id}','status',this.value)">
+      ${['待處理','進行中','完成'].map(s=>`<option${t.status===s?' selected':''}>${s}</option>`).join('')}</select>`;
+    return `<div class="trow ${done?'done':''}">
+      <div class="cell cell-title"><span class="cell-label">任務</span><input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)"></div>
+      <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
+      <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<span>${esc(t.member)||'—'}</span></span></div>
+      <div class="cell"><span class="cell-label">執行人</span><span class="person">${avatar(t.executor)}<span>${esc(t.executor)||'—'}</span></span></div>
+      <div class="cell"><span class="cell-label">優先</span>${priBadge(t.priority)}</div>
+      <div class="cell"><span class="cell-label">狀態</span>${statusSel}</div>
+      <div class="cell"><span class="cell-label">截止</span><input class="inp" type="date" value="${toISO(t.due)}" onchange="inlineUpdate('${id}','due',this.value)"></div>
+      <div class="cell"><span class="cell-label">完成</span><input class="inp" type="date" value="${toISO(t.completed)}" onchange="inlineUpdate('${id}','completed',this.value)"></div>
+      <div class="cell"><span class="cell-label">備註</span><input class="inp" value="${esc(t.note)}" placeholder="點此編輯…" onchange="inlineUpdateDeb('${id}','note',this.value)"></div>
+      <div class="cell"><span class="cell-label">歷史</span><button class="hist-btn" onclick="openHistory('${id}','${tt}')">${hc>0?`記錄(${hc})`:'+ 記錄'}</button></div>
+      <div class="cell" style="justify-content:flex-end"><button class="x-btn" onclick="askDelete('${id}','${tt}','task')" title="刪除">✕</button></div>
+    </div>`;
+  }).join('');
+}
+
+/* ===== CALENDAR (standalone events) ===== */
+function calToday(){const d=new Date();calY=d.getFullYear();calM=d.getMonth();renderCalendar();}
+function calShift(n){calM+=n;if(calM<0){calM=11;calY--;}if(calM>11){calM=0;calY++;}renderCalendar();}
+function eventsByDate(){const map={};events.forEach(e=>{const k=toISO(e.date);if(!k)return;(map[k]=map[k]||[]).push(e);});return map;}
+function renderCalendar(){
+  if(calY==null){const d=new Date();calY=d.getFullYear();calM=d.getMonth();}
+  document.getElementById('cal-month').textContent=`${calY} 年 ${calM+1} 月`;
+  const first=new Date(calY,calM,1),startDow=first.getDay();
+  const daysInMonth=new Date(calY,calM+1,0).getDate();
+  const prevDays=new Date(calY,calM,0).getDate();
+  const todayISO=toISO(new Date());
+  const map=eventsByDate();
+  let cells=[];
+  const pm=calM-1<0?11:calM-1,py=calM-1<0?calY-1:calY;
+  for(let i=startDow-1;i>=0;i--)cells.push({d:prevDays-i,other:true,m:pm,y:py});
+  for(let d=1;d<=daysInMonth;d++)cells.push({d,other:false,m:calM,y:calY});
+  while(cells.length%7!==0||cells.length<42){const last=cells[cells.length-1];let nd=1,nm=calM+1,ny=calY;if(nm>11){nm=0;ny++;}const prevPushed=cells.filter(c=>c.m===nm).length;cells.push({d:prevPushed+1,other:true,m:nm,y:ny});if(cells.length>=42)break;}
+  let html='';
+  for(let w=0;w<cells.length/7;w++){
+    html+='<div class="cal-week">';
+    for(let i=0;i<7;i++){
+      const c=cells[w*7+i];if(!c)continue;
+      const iso=`${c.y}-${String(c.m+1).padStart(2,'0')}-${String(c.d).padStart(2,'0')}`;
+      const evs=map[iso]||[];
+      const shown=evs.slice(0,3),extra=evs.length-shown.length;
+      html+=`<div class="cal-cell ${c.other?'other':''} ${iso===todayISO?'today':''}" onclick="openEventModal('${iso}')">
+        <span class="cal-num">${c.d}</span>
+        ${shown.map(e=>{const col=EVENT_COLORS[e.type]||'#5b6573',bg=EVENT_BG[e.type]||'#eef0f3';
+          return `<div class="cal-ev" style="background:${bg};color:${col}" onclick="event.stopPropagation();editEvent('${jsAttr(e.id)}')">${esc(e.title)}</div>`;}).join('')}
+        ${extra>0?`<div class="cal-more">+${extra} 筆</div>`:''}
+      </div>`;
+    }
+    html+='</div>';
+  }
+  document.getElementById('cal-body').innerHTML=html;
+  document.getElementById('cal-legend').innerHTML=Object.keys(EVENT_COLORS).map(k=>`<span><i style="background:${EVENT_COLORS[k]}"></i>${k==='上市'?'新品/上市':k}</span>`).join('');
+}
+function openEventModal(iso){
+  document.getElementById('event-modal-title').textContent='新增記事';
+  document.getElementById('e-id').value='';
+  document.getElementById('e-date').value=iso&&typeof iso==='string'?iso:toISO(new Date());
+  document.getElementById('e-title').value='';document.getElementById('e-person').value='';document.getElementById('e-type').value='休假';
+  document.getElementById('btn-event-del').style.display='none';
+  openModal('event');
+}
+function editEvent(id){
+  const e=events.find(x=>String(x.id)===String(id));if(!e)return;
+  document.getElementById('event-modal-title').textContent='編輯記事';
+  document.getElementById('e-id').value=e.id;
+  document.getElementById('e-date').value=toISO(e.date);
+  document.getElementById('e-title').value=e.title||'';
+  document.getElementById('e-person').value=e.person||'';
+  document.getElementById('e-type').value=e.type||'其他';
+  document.getElementById('btn-event-del').style.display='inline-flex';
+  openModal('event');
+}
+function syncEventColor(){}
+async function saveEvent(){
+  const title=document.getElementById('e-title').value.trim();
+  const date=document.getElementById('e-date').value;
+  if(!title||!date){showToast('請填日期與內容');return;}
+  const id=document.getElementById('e-id').value;
+  const row={date,title,type:document.getElementById('e-type').value,person:document.getElementById('e-person').value.trim()};
+  const btn=document.getElementById('btn-event');btn.disabled=true;btn.textContent='儲存中…';
+  try{
+    if(id){await apiPost({action:'updateEvent',id,row});}else{await apiPost({action:'addEvent',row});}
+    closeModal('event');showToast('已儲存');await loadData();
+  }catch(e){showToast('儲存失敗');}
+  btn.disabled=false;btn.textContent='儲存';
+}
+async function deleteEvent(){
+  const id=document.getElementById('e-id').value;if(!id)return;
+  if(!confirm('確定刪除這筆記事？'))return;
+  try{await apiPost({action:'deleteEvent',id});events=events.filter(e=>String(e.id)!==String(id));closeModal('event');renderCalendar();showToast('已刪除');}catch(e){showToast('刪除失敗');}
+}
+
+/* ===== MEETINGS ===== */
+function renderMeetings(){
+  const el=document.getElementById('meetings-body');
+  if(!meetings.length){el.innerHTML='<div class="empty">尚無會議記錄</div>';return;}
+  el.innerHTML=meetings.map(m=>`<div class="card">
+    <div class="card-head"><div><div class="card-title">${esc(m.title)}</div><div class="card-date">${fmtDate(m.date)}</div></div>
+      ${m.docUrl?docLink(m.docUrl,'開啟會議記錄'):''}</div>
+    ${m.summary?`<div class="card-summary">${esc(m.summary)}</div>`:''}
+    ${(m.actions||[]).length?`<div style="font-size:12px;font-weight:600;color:var(--muted);margin:12px 0 4px">行動事項</div>
+      ${(m.actions||[]).map(a=>{const done=a.done==='TRUE'||a.done===true;return`<div class="action-item">
+        <div class="check ${done?'on':''}" onclick="toggleAction('${jsAttr(a.id)}','${done?'FALSE':'TRUE'}')">${done?'✓':''}</div>
+        <div style="flex:1;${done?'text-decoration:line-through;color:var(--muted)':''}">${esc(a.text)} <span style="color:var(--muted)">${avatar(a.member)} ${esc(a.member)}</span></div>
+      </div>`;}).join('')}`:''}
+  </div>`).join('');
+}
+function docLink(url,label){return `<a class="doc-link" href="${esc(url)}" target="_blank" rel="noopener">📄 ${label}</a>`;}
+function renderSimple(items,containerId,label){
+  const el=document.getElementById(containerId);if(!el)return;
+  if(!items.length){el.innerHTML='<div class="empty">尚無內容</div>';return;}
+  el.innerHTML=items.map(m=>`<div class="card">
+    <div class="card-head"><div><div class="card-title">${esc(m.title)}</div><div class="card-date">${fmtDate(m.date)}</div></div>
+      ${m.docUrl?docLink(m.docUrl,label):''}</div>
+    ${m.summary?`<div class="card-summary">${esc(m.summary)}</div>`:''}</div>`).join('');
+}
+
+/* ===== TARGETS ===== */
+function renderTargets(){
+  const el=document.getElementById('targets-body');
+  if(!targets.length){el.innerHTML='<div class="empty">尚無業績目標</div>';return;}
+  el.innerHTML=targets.map(t=>{
+    const tg=parseFloat(t.target)||0,pr=parseFloat(t.progress)||0,rate=tg>0?Math.round(pr/tg*100):0;
+    const col=rate>=100?'var(--green)':rate>=70?'var(--amber)':'var(--red)';
+    const claimed=t.claimed==='TRUE'||t.claimed===true,un=t.unachieved==='TRUE'||t.unachieved===true;
+    const id=jsAttr(t.id);
+    return `<div class="card" style="${(claimed||un)?'opacity:.55':''}">
+      <div class="card-head">
+        <div><input class="inp" style="font-size:16px;font-weight:700;padding:2px 4px" value="${esc(t.brand)}" onchange="updTarget('${id}','brand',this.value)">
+          <div style="display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap">
+            <span class="person">${avatar(t.person)}<input class="inp" style="width:90px" value="${esc(t.person)}" onchange="updTarget('${id}','person',this.value)"></span>
+            <input class="inp" style="width:120px;color:var(--muted)" value="${esc(t.store)}" onchange="updTarget('${id}','store',this.value)">
+            <input class="inp" style="width:90px;color:var(--muted)" value="${esc(t.month)}" placeholder="2026/05" onchange="updTarget('${id}','month',this.value)">
+          </div></div>
+        <button class="x-btn" onclick="askDelete('${id}','${jsAttr(t.brand)} ${jsAttr(t.store)}','target')">✕</button>
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px">
+        <div><div style="font-size:11px;color:var(--muted)">目標</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.target||0).toLocaleString()}" onchange="updTarget('${id}','target',this.value.replace(/,/g,''))"></span></div>
+        <div><div style="font-size:11px;color:var(--muted)">進度</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.progress||0).toLocaleString()}" onchange="updTarget('${id}','progress',this.value.replace(/,/g,''))"></span></div>
+        <div><div style="font-size:11px;color:var(--muted)">獎金</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.bonus||0).toLocaleString()}" onchange="updTarget('${id}','bonus',this.value.replace(/,/g,''))"></span></div>
+      </div>
+      <div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--muted)">達成率</span><b style="color:${col}">${rate}%</b></div>
+        <div style="background:#eef0f3;border-radius:6px;height:7px"><div style="background:${col};width:${Math.min(rate,100)}%;height:7px;border-radius:6px;transition:.3s"></div></div></div>
+      <div style="display:flex;gap:16px;margin-top:13px;font-size:13px">
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span class="check ${claimed?'on':''}" onclick="toggleTarget('${id}','claimed','${claimed?'FALSE':'TRUE'}')">${claimed?'✓':''}</span>已領取獎金</label>
+        <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span class="check ${un?'on':''}" style="${un?'background:var(--red);border-color:var(--red)':''}" onclick="toggleTarget('${id}','unachieved','${un?'FALSE':'TRUE'}')">${un?'✕':''}</span>未達成</label>
+      </div>
+    </div>`;
+  }).join('');
+}
+async function updTarget(id,field,value){try{const t=targets.find(x=>String(x.id)===String(id));if(t)t[field]=value;await apiPost({action:'updateTarget',id,row:{[field]:value}});showToast('已儲存');renderTargets();}catch(e){showToast('儲存失敗');}}
+async function toggleTarget(id,field,value){try{const t=targets.find(x=>String(x.id)===String(id));if(t)t[field]=value;await apiPost({action:'updateTarget',id,row:{[field]:value}});renderTargets();showToast('已更新');}catch(e){showToast('更新失敗');}}
+
+/* ===== MEMBERS / LINE ===== */
+function renderMembers(){
+  const bound=members.filter(m=>m.userId).length;
+  document.getElementById('bind-hint').innerHTML=`<b>綁定方式：</b>① 在這裡新增成員姓名 → ② 請他加 LINE 官方帳號好友 → ③ 在對話框輸入<b>自己的姓名</b>，系統會自動把 LINE 綁上。目前已綁定 <b>${bound}/${members.length}</b> 人。`;
+  const el=document.getElementById('members-body');
+  if(!members.length){el.innerHTML='<div class="empty">尚無成員，點右上角新增</div>';return;}
+  el.innerHTML=members.map(m=>{
+    const on=m.notify==='TRUE'||m.notify===true||m.notify===undefined||m.notify==='';
+    const linked=!!m.userId,id=jsAttr(m.id);
+    return `<div class="card" style="display:flex;align-items:center;gap:12px">
+      ${avatar(m.name)}
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700">${esc(m.name)}</div>
+        <div style="font-size:12px;margin-top:2px;color:${linked?'var(--green)':'var(--muted)'}">${linked?'✓ 已綁定 LINE':'尚未綁定 LINE'}</div>
+      </div>
+      <label class="switch" title="接收任務通知"><input type="checkbox" ${on?'checked':''} onchange="updMember('${id}','notify',this.checked?'TRUE':'FALSE')"><span class="slider"></span></label>
+      <button class="x-btn" onclick="askDelete('${id}','${jsAttr(m.name)}','member')">✕</button>
+    </div>`;
+  }).join('');
+}
+async function addMember(){
+  const name=document.getElementById('mb-name').value.trim();
+  if(!name){showToast('請填姓名');return;}
+  const btn=document.getElementById('btn-member');btn.disabled=true;btn.textContent='新增中…';
+  try{await apiPost({action:'addMember',row:{name,notify:'TRUE'}});closeModal('member');document.getElementById('mb-name').value='';showToast('已新增');await loadData();}catch(e){showToast('新增失敗');}
+  btn.disabled=false;btn.textContent='新增';
+}
+async function updMember(id,field,value){try{const m=members.find(x=>String(x.id)===String(id));if(m)m[field]=value;await apiPost({action:'updateMember',id,row:{[field]:value}});showToast('已更新');}catch(e){showToast('更新失敗');}}
+
+/* ===== add task ===== */
+async function addTask(){
+  const title=document.getElementById('t-title').value.trim();
+  if(!title){showToast('請填任務名稱');return;}
+  const btn=document.getElementById('btn-task');btn.disabled=true;btn.textContent='儲存中…';
+  try{
+    await apiPost({action:'addTask',notify:document.getElementById('t-notify').checked,row:{
+      title,category:document.getElementById('t-category').value.trim(),
+      member:document.getElementById('t-member').value.trim(),executor:document.getElementById('t-executor').value.trim(),
+      priority:document.getElementById('t-priority').value,due:document.getElementById('t-due').value,
+      status:document.getElementById('t-status').value,note:document.getElementById('t-note').value.trim()
+    }});
+    closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due'].forEach(i=>document.getElementById(i).value='');
+    document.getElementById('t-notify').checked=true;
+    showToast('任務已新增');await loadData();
+  }catch(e){showToast('新增失敗，請重試');}
+  btn.disabled=false;btn.textContent='新增';
+}
+async function addMeeting(){
+  const title=document.getElementById('m-title').value.trim();if(!title){showToast('請填會議名稱');return;}
+  const btn=document.getElementById('btn-meeting');btn.disabled=true;btn.textContent='儲存中…';
+  const actions=document.getElementById('m-actions').value.trim().split('\n').filter(Boolean).map(l=>{const mt=l.match(/@(\S+)/);return{text:l.replace(/@\S+/,'').trim(),member:mt?mt[1]:'全員'};});
+  try{await apiPost({action:'addMeeting',title,date:document.getElementById('m-date').value||toISO(new Date()),summary:document.getElementById('m-summary').value.trim(),docUrl:document.getElementById('m-docurl').value.trim(),actions});
+    closeModal('meeting');['m-title','m-summary','m-actions','m-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗');}
+  btn.disabled=false;btn.textContent='儲存';
+}
+async function addSimple(type){
+  const p=type==='analytics'?'a':type==='training'?'tr':'r';
+  const title=document.getElementById(p+'-title').value.trim();if(!title){showToast('請填標題');return;}
+  const action=type==='analytics'?'addAnalytics':type==='training'?'addTraining':'addReport';
+  const btn=document.getElementById('btn-'+type);btn.disabled=true;btn.textContent='儲存中…';
+  try{await apiPost({action,title,date:document.getElementById(p+'-date').value||toISO(new Date()),summary:document.getElementById(p+'-summary').value.trim(),docUrl:document.getElementById(p+'-docurl').value.trim()});
+    closeModal(type);[p+'-title',p+'-summary',p+'-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗');}
+  btn.disabled=false;btn.textContent='新增';
+}
+async function addTarget(){
+  const brand=document.getElementById('tg-brand').value.trim(),store=document.getElementById('tg-store').value.trim();
+  if(!brand||!store){showToast('請填品牌和店名');return;}
+  const btn=document.getElementById('btn-target');btn.disabled=true;btn.textContent='儲存中…';
+  try{await apiPost({action:'addTarget',row:{brand,person:document.getElementById('tg-person').value.trim(),store,
+    target:document.getElementById('tg-target').value||0,progress:document.getElementById('tg-progress').value||0,
+    bonus:document.getElementById('tg-bonus').value||0,month:document.getElementById('tg-month').value.trim()}});
+    closeModal('target');['tg-brand','tg-person','tg-store','tg-target','tg-progress','tg-bonus','tg-month'].forEach(i=>document.getElementById(i).value='');showToast('已新增');await loadData();}catch(e){showToast('新增失敗');}
+  btn.disabled=false;btn.textContent='新增';
+}
+
+/* ===== inline / history / delete ===== */
+async function inlineUpdate(id,field,value){try{const t=tasks.find(x=>String(x.id)===String(id));if(t){t[field]=value;updateStats();}await apiPost({action:'updateTask',id,row:{[field]:value}});showToast('已儲存');renderCurrent();}catch(e){showToast('儲存失敗');}}
+function inlineUpdateDeb(id,field,value){if(saveTimer[id+field])clearTimeout(saveTimer[id+field]);saveTimer[id+field]=setTimeout(()=>inlineUpdate(id,field,value),700);}
+async function toggleAction(aid,done){try{await apiPost({action:'toggleAction',actionId:aid,done});await loadData();}catch(e){showToast('更新失敗');}}
+
+function openHistory(id,title){
+  curHistoryId=id;document.getElementById('history-title').textContent='修改記錄：'+title;
+  const hs=histOf(id),b=document.getElementById('history-body');
+  b.innerHTML=hs.length?hs.map(h=>`<div class="history-item"><div class="d">${fmtDate(h.date)}</div><div>${esc(h.change)}</div></div>`).join(''):'<div class="empty" style="padding:14px 0">尚無修改記錄</div>';
+  document.getElementById('history-input').value='';openModal('history');
+}
+async function submitHistory(){
+  const change=document.getElementById('history-input').value.trim();if(!change){showToast('請填修改說明');return;}
+  const btn=document.getElementById('btn-history');btn.disabled=true;btn.textContent='儲存中…';
+  try{await apiPost({action:'addHistory',taskId:curHistoryId,change});showToast('已新增');await loadData();
+    openHistory(curHistoryId,document.getElementById('history-title').textContent.replace('修改記錄：',''));}catch(e){showToast('儲存失敗');}
+  btn.disabled=false;btn.textContent='新增記錄';
+}
+
+function askDelete(id,title,type){pendingDelete={id,type};document.getElementById('confirm-title').textContent=title;openModal('confirm');}
+async function confirmDelete(){
+  if(!pendingDelete)return;const{id,type}=pendingDelete;
+  const actionMap={task:'deleteTask',target:'deleteTask',member:'deleteMember'};
+  try{await apiPost({action:actionMap[type]||'deleteTask',id});
+    if(type==='task')tasks=tasks.filter(t=>String(t.id)!==String(id));
+    if(type==='target')targets=targets.filter(t=>String(t.id)!==String(id));
+    if(type==='member')members=members.filter(t=>String(t.id)!==String(id));
+    pendingDelete=null;closeModal('confirm');showToast('已刪除');updateStats();renderCurrent();}catch(e){showToast('刪除失敗');}
+}
+
+function openModal(t){document.getElementById('modal-'+t).classList.add('open');}
+function closeModal(t){document.getElementById('modal-'+t).classList.remove('open');}
+document.querySelectorAll('.modal-bg').forEach(bg=>bg.addEventListener('click',e=>{if(e.target===bg)bg.classList.remove('open');}));
+
+/* PWA */
+if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}
+
+calToday();
+loadData();
+</script>
+</body>
+</html>

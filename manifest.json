@@ -1,0 +1,14 @@
+{
+  "name": "昱恩 · 內部追蹤工具",
+  "short_name": "昱恩追蹤",
+  "description": "昱恩內部任務 / 行事曆 / 業績追蹤工具",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#f5f6f8",
+  "theme_color": "#16233a",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
