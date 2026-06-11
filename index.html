@@ -81,7 +81,7 @@ button,input,select,textarea{font-family:inherit}
 
 /* ---------- responsive task list (table on desktop, cards on mobile) ---------- */
 .tlist{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;box-shadow:var(--shadow)}
-.thead,.trow{display:grid;grid-template-columns:1.7fr .9fr .8fr .8fr .6fr .9fr .9fr .9fr 1.6fr 56px 40px;align-items:center;gap:8px}
+.thead,.trow{display:grid;grid-template-columns:1.7fr .9fr .8fr .8fr .6fr .9fr .9fr 1.6fr 56px 40px;align-items:center;gap:8px}
 .thead{padding:10px 14px;background:#fafbfc;border-bottom:1px solid var(--line);font-size:11.5px;color:var(--muted);font-weight:600}
 .trow{padding:9px 14px;border-bottom:1px solid #f1f3f5;font-size:13px}
 .trow:last-child{border-bottom:none}
@@ -259,7 +259,7 @@ button,input,select,textarea{font-family:inherit}
     <div class="tlist">
       <div class="thead">
         <div>任務名稱</div><div>專案</div><div>負責人</div><div>執行人</div><div>優先</div>
-        <div>狀態</div><div>截止</div><div>完成</div><div>備註／進度</div><div>歷史</div><div></div>
+        <div>狀態</div><div>截止</div><div>備註／進度</div><div>歷史</div><div></div>
       </div>
       <div id="task-body"><div class="loading">載入中…</div></div>
     </div>
@@ -359,9 +359,9 @@ button,input,select,textarea{font-family:inherit}
   <div class="row"><label>內容</label><input id="e-title" placeholder="例：A同事休假 / 新品上市"></div>
   <div class="row2">
     <div class="row"><label>分類</label><select id="e-type" onchange="syncEventColor()">
-      <option value="休假">休假</option><option value="上市">新品 / 上市</option><option value="活動">活動</option>
+      <option value="開幕">新店開幕</option><option value="休假">休假</option><option value="上市">新品 / 上市</option><option value="活動">活動</option>
       <option value="提醒">提醒</option><option value="其他">其他</option></select></div>
-    <div class="row"><label>相關人員（可空）</label><input id="e-person" placeholder="例：Emily"></div>
+    <div class="row"><label>相關人員 / 通知對象（可空）</label><input id="e-person" placeholder="例：Emily（要跟成員表一致才會收到提醒）"></div>
   </div>
   <div class="modal-foot">
     <button class="btn btn-danger" id="btn-event-del" style="display:none;margin-right:auto" onclick="deleteEvent()">刪除</button>
@@ -449,8 +449,8 @@ let currentTab='list',pendingDelete=null,curHistoryId=null,saveTimer={};
 let calY,calM; // calendar year / month
 const COLORS=['#1f6feb','#1f7a37','#a5371d','#5b4bc4','#0f766e','#b4670b'];
 const MC={};let ci=0;
-const EVENT_COLORS={'休假':'#b4670b','上市':'#1f7a37','活動':'#1f6feb','提醒':'#a5371d','其他':'#5b6573'};
-const EVENT_BG={'休假':'#fbf0dc','上市':'#e6f3e8','活動':'#e7f0fd','提醒':'#fbe9e4','其他':'#eef0f3'};
+const EVENT_COLORS={'開幕':'#b4327a','休假':'#b4670b','上市':'#1f7a37','活動':'#1f6feb','提醒':'#a5371d','其他':'#5b6573'};
+const EVENT_BG={'開幕':'#fbe4f1','休假':'#fbf0dc','上市':'#e6f3e8','活動':'#e7f0fd','提醒':'#fbe9e4','其他':'#eef0f3'};
 
 /* ===== helpers ===== */
 function mc(n){if(!n)return'#7c8493';if(!MC[n])MC[n]=COLORS[ci++%COLORS.length];return MC[n];}
@@ -572,7 +572,6 @@ function renderList(){
       <div class="cell"><span class="cell-label">優先</span>${priBadge(t.priority)}</div>
       <div class="cell"><span class="cell-label">狀態</span>${statusSel}</div>
       <div class="cell"><span class="cell-label">截止</span><input class="inp" type="date" value="${toISO(t.due)}" onchange="inlineUpdate('${id}','due',this.value)"></div>
-      <div class="cell"><span class="cell-label">完成</span><input class="inp" type="date" value="${toISO(t.completed)}" onchange="inlineUpdate('${id}','completed',this.value)"></div>
       <div class="cell"><span class="cell-label">備註</span><input class="inp" value="${esc(t.note)}" placeholder="點此編輯…" onchange="inlineUpdateDeb('${id}','note',this.value)"></div>
       <div class="cell"><span class="cell-label">歷史</span><button class="hist-btn" onclick="openHistory('${id}','${tt}')">${hc>0?`記錄(${hc})`:'+ 記錄'}</button></div>
       <div class="cell" style="justify-content:flex-end"><button class="x-btn" onclick="askDelete('${id}','${tt}','task')" title="刪除">✕</button></div>
@@ -615,7 +614,7 @@ function renderCalendar(){
     html+='</div>';
   }
   document.getElementById('cal-body').innerHTML=html;
-  document.getElementById('cal-legend').innerHTML=Object.keys(EVENT_COLORS).map(k=>`<span><i style="background:${EVENT_COLORS[k]}"></i>${k==='上市'?'新品/上市':k}</span>`).join('');
+  document.getElementById('cal-legend').innerHTML=Object.keys(EVENT_COLORS).map(k=>`<span><i style="background:${EVENT_COLORS[k]}"></i>${k==='上市'?'新品/上市':k==='開幕'?'新店開幕':k}</span>`).join('');
 }
 function openEventModal(iso){
   document.getElementById('event-modal-title').textContent='新增記事';
