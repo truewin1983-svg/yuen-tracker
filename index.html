@@ -223,7 +223,6 @@ button,input,select,textarea{font-family:inherit}
 <div class="tabwrap">
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="list" onclick="switchTab('list',this)">任務清單</button>
-    <button class="tab" data-tab="calendar" onclick="switchTab('calendar',this)">行事曆</button>
     <button class="tab" data-tab="targets" onclick="switchTab('targets',this)">業績目標</button>
     <button class="tab" data-tab="meetings" onclick="switchTab('meetings',this)">會議記錄</button>
     <button class="tab" data-tab="analytics" onclick="switchTab('analytics',this)">數據分析</button>
@@ -263,30 +262,6 @@ button,input,select,textarea{font-family:inherit}
       </div>
       <div id="task-body"><div class="loading">載入中…</div></div>
     </div>
-  </div>
-
-  <!-- ====== CALENDAR ====== -->
-  <div id="tab-calendar" class="section">
-    <div class="toolbar">
-      <div style="font-size:15px;font-weight:700">行事曆 · 重要日子</div>
-      <button class="btn btn-sm btn-primary" onclick="openEventModal()">+ 新增記事</button>
-    </div>
-    <div class="cal-bar">
-      <div class="cal-nav">
-        <button class="btn btn-sm" onclick="calShift(-1)">‹</button>
-        <div class="cal-month" id="cal-month"></div>
-        <button class="btn btn-sm" onclick="calShift(1)">›</button>
-      </div>
-      <button class="btn btn-sm btn-ghost" onclick="calToday()">回到今天</button>
-    </div>
-    <div class="cal-grid">
-      <div class="cal-week cal-dowrow">
-        <div class="cal-dow">日</div><div class="cal-dow">一</div><div class="cal-dow">二</div>
-        <div class="cal-dow">三</div><div class="cal-dow">四</div><div class="cal-dow">五</div><div class="cal-dow">六</div>
-      </div>
-      <div id="cal-body"></div>
-    </div>
-    <div class="legend" id="cal-legend"></div>
   </div>
 
   <!-- ====== TARGETS ====== -->
@@ -350,24 +325,6 @@ button,input,select,textarea{font-family:inherit}
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('task')">取消</button>
     <button class="btn btn-primary" id="btn-task" onclick="addTask()">新增</button></div>
-</div></div>
-
-<div class="modal-bg" id="modal-event"><div class="modal">
-  <h3 id="event-modal-title">新增記事</h3>
-  <input type="hidden" id="e-id">
-  <div class="row"><label>日期</label><input id="e-date" type="date"></div>
-  <div class="row"><label>內容</label><input id="e-title" placeholder="例：A同事休假 / 新品上市"></div>
-  <div class="row2">
-    <div class="row"><label>分類</label><select id="e-type" onchange="syncEventColor()">
-      <option value="開幕">新店開幕</option><option value="休假">休假</option><option value="上市">新品 / 上市</option><option value="活動">活動</option>
-      <option value="提醒">提醒</option><option value="其他">其他</option></select></div>
-    <div class="row"><label>相關人員 / 通知對象（可空）</label><input id="e-person" placeholder="例：Emily（要跟成員表一致才會收到提醒）"></div>
-  </div>
-  <div class="modal-foot">
-    <button class="btn btn-danger" id="btn-event-del" style="display:none;margin-right:auto" onclick="deleteEvent()">刪除</button>
-    <button class="btn" onclick="closeModal('event')">取消</button>
-    <button class="btn btn-primary" id="btn-event" onclick="saveEvent()">儲存</button>
-  </div>
 </div></div>
 
 <div class="modal-bg" id="modal-meeting"><div class="modal">
@@ -499,7 +456,7 @@ async function apiPost(body,retries){
 async function loadData(){
   setStatus('同步中…','loading');
   const calls={tasks:'getTasks',meetings:'getMeetings',histories:'getHistory',analytics:'getAnalytics',
-    reports:'getReports',targets:'getTargets',events:'getEvents',members:'getMembers'};
+    reports:'getReports',targets:'getTargets',members:'getMembers'};
   const keys=Object.keys(calls);
   const res=await Promise.all(keys.map(k=>jsonp({action:calls[k]}).then(d=>({k,d,ok:true})).catch(()=>({k,ok:false}))));
   let fail=0;
@@ -507,7 +464,7 @@ async function loadData(){
     if(!r.ok){fail++;return;}
     const v=arr(r.d);
     ({tasks:()=>tasks=v,meetings:()=>meetings=v,histories:()=>histories=v,analytics:()=>analytics=v,
-      reports:()=>reports=v,targets:()=>targets=v,events:()=>events=v,members:()=>members=v}[r.k])();
+      reports:()=>reports=v,targets:()=>targets=v,members:()=>members=v}[r.k])();
   });
   updateStats();updateFilters();renderCurrent();
   const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
@@ -542,7 +499,7 @@ function switchTab(name,el){
   currentTab=name;renderCurrent();
 }
 function renderCurrent(){
-  ({list:renderList,calendar:renderCalendar,targets:renderTargets,meetings:renderMeetings,
+  ({list:renderList,targets:renderTargets,meetings:renderMeetings,
     analytics:()=>renderSimple(analytics,'analytics-body','開啟文件'),
     reports:()=>renderSimple(reports,'reports-body','開啟文件'),
     members:renderMembers}[currentTab]||(()=>{}))();
@@ -828,7 +785,6 @@ document.querySelectorAll('.modal-bg').forEach(bg=>bg.addEventListener('click',e
 /* PWA */
 if('serviceWorker'in navigator){window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));}
 
-calToday();
 loadData();
 </script>
 </body>
