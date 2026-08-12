@@ -223,7 +223,6 @@ button,input,select,textarea{font-family:inherit}
 <div class="tabwrap">
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="list" onclick="switchTab('list',this)">任務清單</button>
-    <button class="tab" data-tab="targets" onclick="switchTab('targets',this)">業績目標</button>
     <button class="tab" data-tab="meetings" onclick="switchTab('meetings',this)">會議記錄</button>
     <button class="tab" data-tab="analytics" onclick="switchTab('analytics',this)">數據分析</button>
     <button class="tab" data-tab="reports" onclick="switchTab('reports',this)">綜合回報</button>
@@ -253,7 +252,7 @@ button,input,select,textarea{font-family:inherit}
       <select id="f-member" onchange="renderList()"><option value="">全部成員</option></select>
       <select id="f-cat" onchange="renderList()"><option value="">全部專案</option></select>
       <select id="f-pri" onchange="renderList()"><option value="">全部優先度</option><option>高</option><option>中</option><option>低</option></select>
-      <select id="f-status" onchange="renderList()"><option value="">全部狀態</option><option>待處理</option><option>進行中</option><option>完成</option></select>
+      <select id="f-status" onchange="renderList()"><option value="">全部狀態</option><option>待處理</option><option>進行中</option><option>完成</option><option>取消/終止</option></select>
     </div>
     <div class="tlist">
       <div class="thead">
@@ -265,14 +264,6 @@ button,input,select,textarea{font-family:inherit}
   </div>
 
   <!-- ====== TARGETS ====== -->
-  <div id="tab-targets" class="section">
-    <div class="toolbar">
-      <div style="font-size:15px;font-weight:700">業績目標追蹤</div>
-      <button class="btn btn-sm btn-primary" onclick="openModal('target')">+ 業績目標</button>
-    </div>
-    <div id="targets-body"><div class="loading">載入中…</div></div>
-  </div>
-
   <!-- ====== MEETINGS ====== -->
   <div id="tab-meetings" class="section">
     <div class="toolbar"><div style="font-size:15px;font-weight:700">會議記錄</div>
@@ -315,7 +306,7 @@ button,input,select,textarea{font-family:inherit}
   <div class="row"><label>執行人</label><input id="t-executor" list="dl-people" placeholder="實際落實者"></div>
   <div class="row2">
     <div class="row"><label>優先度</label><select id="t-priority"><option>高</option><option selected>中</option><option>低</option></select></div>
-    <div class="row"><label>狀態</label><select id="t-status"><option>待處理</option><option>進行中</option><option>完成</option></select></div>
+    <div class="row"><label>狀態</label><select id="t-status"><option>待處理</option><option>進行中</option><option>完成</option><option>取消/終止</option></select></div>
   </div>
   <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
   <div class="row"><label>備註／進度說明</label><textarea id="t-note" placeholder="目前進度或補充"></textarea></div>
@@ -358,19 +349,6 @@ button,input,select,textarea{font-family:inherit}
     <button class="btn btn-primary" id="btn-reports" onclick="addSimple('reports')">新增</button></div>
 </div></div>
 
-<div class="modal-bg" id="modal-target"><div class="modal">
-  <h3>新增業績目標</h3>
-  <div class="row2"><div class="row"><label>品牌</label><input id="tg-brand" placeholder="例：初韻"></div>
-    <div class="row"><label>負責人</label><input id="tg-person" placeholder="例：Emily"></div></div>
-  <div class="row"><label>店名</label><input id="tg-store" placeholder="例：基隆廟口店"></div>
-  <div class="row"><label>月份</label><input id="tg-month" placeholder="例：2026/05"></div>
-  <div class="row2"><div class="row"><label>該月目標</label><input id="tg-target" type="number" placeholder="0"></div>
-    <div class="row"><label>目前進度</label><input id="tg-progress" type="number" placeholder="0"></div></div>
-  <div class="row"><label>本月獎金金額</label><input id="tg-bonus" type="number" placeholder="0"></div>
-  <div class="modal-foot"><button class="btn" onclick="closeModal('target')">取消</button>
-    <button class="btn btn-primary" id="btn-target" onclick="addTarget()">新增</button></div>
-</div></div>
-
 <div class="modal-bg" id="modal-member"><div class="modal">
   <h3>新增成員</h3>
   <div class="row"><label>姓名（要跟任務的負責人 / 執行人一致）</label><input id="mb-name" placeholder="例：阿翔"></div>
@@ -401,7 +379,7 @@ button,input,select,textarea{font-family:inherit}
 const API='https://script.google.com/macros/s/AKfycbyrdi1iyX4342FwLl2c_SyrSH9dY4yVlqDToXS34yJEDeI1bDn8mfYwB-brn8yZFdPANg/exec';
 
 /* ===== state ===== */
-let tasks=[],meetings=[],histories=[],analytics=[],reports=[],targets=[],trainings=[],events=[],members=[];
+let tasks=[],meetings=[],histories=[],analytics=[],reports=[],trainings=[],events=[],members=[];
 let currentTab='list',pendingDelete=null,curHistoryId=null,saveTimer={};
 let calY,calM; // calendar year / month
 const COLORS=['#1f6feb','#1f7a37','#a5371d','#5b4bc4','#0f766e','#b4670b'];
@@ -456,7 +434,7 @@ async function apiPost(body,retries){
 async function loadData(){
   setStatus('同步中…','loading');
   const calls={tasks:'getTasks',meetings:'getMeetings',histories:'getHistory',analytics:'getAnalytics',
-    reports:'getReports',targets:'getTargets',members:'getMembers'};
+    reports:'getReports',members:'getMembers'};
   const keys=Object.keys(calls);
   const res=await Promise.all(keys.map(k=>jsonp({action:calls[k]}).then(d=>({k,d,ok:true})).catch(()=>({k,ok:false}))));
   let fail=0;
@@ -464,7 +442,7 @@ async function loadData(){
     if(!r.ok){fail++;return;}
     const v=arr(r.d);
     ({tasks:()=>tasks=v,meetings:()=>meetings=v,histories:()=>histories=v,analytics:()=>analytics=v,
-      reports:()=>reports=v,targets:()=>targets=v,members:()=>members=v}[r.k])();
+      reports:()=>reports=v,members:()=>members=v}[r.k])();
   });
   updateStats();updateFilters();renderCurrent();
   const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
@@ -499,7 +477,7 @@ function switchTab(name,el){
   currentTab=name;renderCurrent();
 }
 function renderCurrent(){
-  ({list:renderList,targets:renderTargets,meetings:renderMeetings,
+  ({list:renderList,meetings:renderMeetings,
     analytics:()=>renderSimple(analytics,'analytics-body','開啟文件'),
     reports:()=>renderSimple(reports,'reports-body','開啟文件'),
     members:renderMembers}[currentTab]||(()=>{}))();
@@ -518,9 +496,9 @@ function renderList(){
   const f=getFiltered(),b=document.getElementById('task-body');
   if(!f.length){b.innerHTML='<div class="empty">沒有符合的任務</div>';return;}
   b.innerHTML=f.map(t=>{
-    const done=t.status==='完成',hc=histOf(t.id).length,id=jsAttr(t.id),tt=jsAttr(t.title);
+    const done=t.status==='完成'||t.status==='取消/終止',hc=histOf(t.id).length,id=jsAttr(t.id),tt=jsAttr(t.title);
     const statusSel=`<select class="sel" onchange="inlineUpdate('${id}','status',this.value)">
-      ${['待處理','進行中','完成'].map(s=>`<option${t.status===s?' selected':''}>${s}</option>`).join('')}</select>`;
+      ${['待處理','進行中','完成','取消/終止'].map(s=>`<option${t.status===s?' selected':''}>${s}</option>`).join('')}</select>`;
     return `<div class="trow ${done?'done':''}">
       <div class="cell cell-title"><span class="cell-label">任務</span><input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)"></div>
       <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
@@ -637,42 +615,6 @@ function renderSimple(items,containerId,label){
     ${m.summary?`<div class="card-summary">${esc(m.summary)}</div>`:''}</div>`).join('');
 }
 
-/* ===== TARGETS ===== */
-function renderTargets(){
-  const el=document.getElementById('targets-body');
-  if(!targets.length){el.innerHTML='<div class="empty">尚無業績目標</div>';return;}
-  el.innerHTML=targets.map(t=>{
-    const tg=parseFloat(t.target)||0,pr=parseFloat(t.progress)||0,rate=tg>0?Math.round(pr/tg*100):0;
-    const col=rate>=100?'var(--green)':rate>=70?'var(--amber)':'var(--red)';
-    const claimed=t.claimed==='TRUE'||t.claimed===true,un=t.unachieved==='TRUE'||t.unachieved===true;
-    const id=jsAttr(t.id);
-    return `<div class="card" style="${(claimed||un)?'opacity:.55':''}">
-      <div class="card-head">
-        <div><input class="inp" style="font-size:16px;font-weight:700;padding:2px 4px" value="${esc(t.brand)}" onchange="updTarget('${id}','brand',this.value)">
-          <div style="display:flex;gap:6px;align-items:center;margin-top:3px;flex-wrap:wrap">
-            <span class="person">${avatar(t.person)}<input class="inp" style="width:90px" value="${esc(t.person)}" onchange="updTarget('${id}','person',this.value)"></span>
-            <input class="inp" style="width:120px;color:var(--muted)" value="${esc(t.store)}" onchange="updTarget('${id}','store',this.value)">
-            <input class="inp" style="width:90px;color:var(--muted)" value="${esc(t.month)}" placeholder="2026/05" onchange="updTarget('${id}','month',this.value)">
-          </div></div>
-        <button class="x-btn" onclick="askDelete('${id}','${jsAttr(t.brand)} ${jsAttr(t.store)}','target')">✕</button>
-      </div>
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:12px">
-        <div><div style="font-size:11px;color:var(--muted)">目標</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.target||0).toLocaleString()}" onchange="updTarget('${id}','target',this.value.replace(/,/g,''))"></span></div>
-        <div><div style="font-size:11px;color:var(--muted)">進度</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.progress||0).toLocaleString()}" onchange="updTarget('${id}','progress',this.value.replace(/,/g,''))"></span></div>
-        <div><div style="font-size:11px;color:var(--muted)">獎金</div><span style="display:flex;align-items:center"><span style="color:var(--muted)">$</span><input class="inp" value="${Number(t.bonus||0).toLocaleString()}" onchange="updTarget('${id}','bonus',this.value.replace(/,/g,''))"></span></div>
-      </div>
-      <div style="margin-top:12px"><div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:4px"><span style="color:var(--muted)">達成率</span><b style="color:${col}">${rate}%</b></div>
-        <div style="background:#eef0f3;border-radius:6px;height:7px"><div style="background:${col};width:${Math.min(rate,100)}%;height:7px;border-radius:6px;transition:.3s"></div></div></div>
-      <div style="display:flex;gap:16px;margin-top:13px;font-size:13px">
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span class="check ${claimed?'on':''}" onclick="toggleTarget('${id}','claimed','${claimed?'FALSE':'TRUE'}')">${claimed?'✓':''}</span>已領取獎金</label>
-        <label style="display:flex;align-items:center;gap:7px;cursor:pointer"><span class="check ${un?'on':''}" style="${un?'background:var(--red);border-color:var(--red)':''}" onclick="toggleTarget('${id}','unachieved','${un?'FALSE':'TRUE'}')">${un?'✕':''}</span>未達成</label>
-      </div>
-    </div>`;
-  }).join('');
-}
-async function updTarget(id,field,value){try{const t=targets.find(x=>String(x.id)===String(id));if(t)t[field]=value;await apiPost({action:'updateTarget',id,row:{[field]:value}});showToast('已儲存');renderTargets();}catch(e){showToast('儲存失敗');}}
-async function toggleTarget(id,field,value){try{const t=targets.find(x=>String(x.id)===String(id));if(t)t[field]=value;await apiPost({action:'updateTarget',id,row:{[field]:value}});renderTargets();showToast('已更新');}catch(e){showToast('更新失敗');}}
-
 /* ===== MEMBERS / LINE ===== */
 function renderMembers(){
   const bound=members.filter(m=>m.userId).length;
@@ -737,17 +679,6 @@ async function addSimple(type){
     closeModal(type);[p+'-title',p+'-summary',p+'-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗');}
   btn.disabled=false;btn.textContent='新增';
 }
-async function addTarget(){
-  const brand=document.getElementById('tg-brand').value.trim(),store=document.getElementById('tg-store').value.trim();
-  if(!brand||!store){showToast('請填品牌和店名');return;}
-  const btn=document.getElementById('btn-target');btn.disabled=true;btn.textContent='儲存中…';
-  try{await apiPost({action:'addTarget',row:{brand,person:document.getElementById('tg-person').value.trim(),store,
-    target:document.getElementById('tg-target').value||0,progress:document.getElementById('tg-progress').value||0,
-    bonus:document.getElementById('tg-bonus').value||0,month:document.getElementById('tg-month').value.trim()}});
-    closeModal('target');['tg-brand','tg-person','tg-store','tg-target','tg-progress','tg-bonus','tg-month'].forEach(i=>document.getElementById(i).value='');showToast('已新增');await loadData();}catch(e){showToast('新增失敗');}
-  btn.disabled=false;btn.textContent='新增';
-}
-
 /* ===== inline / history / delete ===== */
 async function inlineUpdate(id,field,value){try{const t=tasks.find(x=>String(x.id)===String(id));if(t){t[field]=value;updateStats();}await apiPost({action:'updateTask',id,row:{[field]:value}});showToast('已儲存');renderCurrent();}catch(e){showToast('儲存失敗');}}
 function inlineUpdateDeb(id,field,value){if(saveTimer[id+field])clearTimeout(saveTimer[id+field]);saveTimer[id+field]=setTimeout(()=>inlineUpdate(id,field,value),700);}
@@ -773,7 +704,6 @@ async function confirmDelete(){
   const actionMap={task:'deleteTask',target:'deleteTask',member:'deleteMember'};
   try{await apiPost({action:actionMap[type]||'deleteTask',id});
     if(type==='task')tasks=tasks.filter(t=>String(t.id)!==String(id));
-    if(type==='target')targets=targets.filter(t=>String(t.id)!==String(id));
     if(type==='member')members=members.filter(t=>String(t.id)!==String(id));
     pendingDelete=null;closeModal('confirm');showToast('已刪除');updateStats();renderCurrent();}catch(e){showToast('刪除失敗');}
 }
