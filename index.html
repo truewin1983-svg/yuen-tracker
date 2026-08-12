@@ -416,8 +416,16 @@ function jsonp(params,retries){
     attempt(retries);
   });
 }
+/* 會「新增一筆資料」的動作不可以自動重試：
+   Google Apps Script 常常已經寫進去了、只是回應逾時，
+   這時重送就會變成同一筆新增兩次（先前任務重複出現的原因）。
+   更新／刪除是覆寫同一列，重試沒有副作用，維持重試。 */
+const NO_RETRY_ACTIONS = new Set(['addTask','addMeeting','addMember','addTarget',
+  'addAnalytics','addReport','addTraining','addEvent','addHistory','addAction']);
+
 async function apiPost(body,retries){
-  retries=(retries==null)?2:retries;
+  const isCreate = body && NO_RETRY_ACTIONS.has(body.action);
+  retries = (retries!=null) ? retries : (isCreate ? 0 : 2);
   let lastErr;
   for(let i=0;i<=retries;i++){
     try{
@@ -659,7 +667,10 @@ async function addTask(){
     closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due'].forEach(i=>document.getElementById(i).value='');
     document.getElementById('t-notify').checked=true;
     showToast('任務已新增');await loadData();
-  }catch(e){showToast('新增失敗，請重試');}
+  }catch(e){
+    showToast('沒收到回應，請按「↻ 重新整理」確認是否已新增，再決定要不要重送');
+    await loadData();            // 順便重載，多半會發現其實已經寫進去了
+  }
   btn.disabled=false;btn.textContent='新增';
 }
 async function addMeeting(){
