@@ -376,7 +376,7 @@ button,input,select,textarea{font-family:inherit}
 
 <script>
 /* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
-const API='https://script.google.com/macros/s/AKfycbyrdi1iyX4342FwLl2c_SyrSH9dY4yVlqDToXS34yJEDeI1bDn8mfYwB-brn8yZFdPANg/exec';
+const API='/api/track';   // 改用 Neon（原本是 Google Apps Script，載入要數十秒）
 
 /* ===== state ===== */
 let tasks=[],meetings=[],histories=[],analytics=[],reports=[],trainings=[],events=[],members=[];
@@ -399,27 +399,14 @@ function showToast(m){const t=document.getElementById('toast');t.textContent=m;t
 function setStatus(m,s){document.getElementById('sync-text').textContent=m;document.getElementById('dot').className='dot '+(s==='ok'?'dot-ok':s==='err'?'dot-err':'dot-loading');}
 
 /* ===== API ===== */
-function jsonp(params,retries){
-  retries=(retries==null)?1:retries;
-  return new Promise((resolve,reject)=>{
-    function attempt(left){
-      const cb='cb_'+Date.now()+'_'+Math.floor(Math.random()*99999);
-      let s;
-      const cleanup=()=>{clearTimeout(timer);delete window[cb];try{s&&s.remove();}catch(e){}};
-      const timer=setTimeout(()=>{cleanup();left>0?attempt(left-1):reject(new Error('timeout'));},15000);
-      window[cb]=d=>{cleanup();resolve(d);};
-      const qs=Object.entries({...params,callback:cb}).map(([k,v])=>k+'='+encodeURIComponent(v)).join('&');
-      s=document.createElement('script');s.src=API+'?'+qs;
-      s.onerror=()=>{cleanup();left>0?attempt(left-1):reject(new Error('error'));};
-      document.head.appendChild(s);
-    }
-    attempt(retries);
-  });
+// 讀取：直接打自家 API（Neon），不再需要 JSONP
+async function apiGet(action){
+  const r=await fetch(API+'?action='+encodeURIComponent(action),{cache:'no-store'});
+  const j=await r.json();
+  if(j&&j.error)throw new Error(j.error);
+  return j;
 }
-/* 會「新增一筆資料」的動作不可以自動重試：
-   Google Apps Script 常常已經寫進去了、只是回應逾時，
-   這時重送就會變成同一筆新增兩次（先前任務重複出現的原因）。
-   更新／刪除是覆寫同一列，重試沒有副作用，維持重試。 */
+
 const NO_RETRY_ACTIONS = new Set(['addTask','addMeeting','addMember','addTarget',
   'addAnalytics','addReport','addTraining','addEvent','addHistory','addAction']);
 
@@ -429,7 +416,7 @@ async function apiPost(body,retries){
   let lastErr;
   for(let i=0;i<=retries;i++){
     try{
-      const r=await fetch(API,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'text/plain'}});
+      const r=await fetch(API,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
       const j=await r.json();
       if(j&&j.error)throw new Error(j.error);
       return j;
@@ -441,22 +428,17 @@ async function apiPost(body,retries){
 /* ===== load ===== */
 async function loadData(){
   setStatus('同步中…','loading');
-  const calls={tasks:'getTasks',meetings:'getMeetings',histories:'getHistory',analytics:'getAnalytics',
-    reports:'getReports',members:'getMembers'};
-  const keys=Object.keys(calls);
-  const res=await Promise.all(keys.map(k=>jsonp({action:calls[k]}).then(d=>({k,d,ok:true})).catch(()=>({k,ok:false}))));
-  let fail=0;
-  res.forEach(r=>{
-    if(!r.ok){fail++;return;}
-    const v=arr(r.d);
-    ({tasks:()=>tasks=v,meetings:()=>meetings=v,histories:()=>histories=v,analytics:()=>analytics=v,
-      reports:()=>reports=v,members:()=>members=v}[r.k])();
-  });
-  updateStats();updateFilters();renderCurrent();
-  const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
-  if(fail===0)setStatus('已同步 · '+tm,'ok');
-  else if(fail<keys.length)setStatus('已同步 · '+tm,'ok');
-  else setStatus('連線失敗，點重新整理','err');
+  try{
+    const d=await apiGet('all');            // 一次取回全部，只發一個請求
+    tasks=arr(d.tasks); histories=arr(d.histories); meetings=arr(d.meetings);
+    analytics=arr(d.analytics); reports=arr(d.reports);
+    members=arr(d.members); events=arr(d.events);
+    updateStats();updateFilters();renderCurrent();
+    const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
+    setStatus('已同步 · '+tm,'ok');
+  }catch(e){
+    setStatus('連線失敗，點重新整理','err');
+  }
 }
 function arr(x){return Array.isArray(x)?x:[];}
 
