@@ -106,6 +106,11 @@ button,input,select,textarea{font-family:inherit}
 .b-purple{background:var(--purple-bg);color:var(--purple)}
 .b-cat{background:#eef0f3;color:var(--ink-soft);max-width:100%;overflow:hidden;text-overflow:ellipsis}
 .person{display:flex;align-items:center;gap:6px;min-width:0}
+.persons{display:flex;flex-wrap:wrap;gap:4px 8px;min-width:0}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
+.chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
+      background:#fff;cursor:pointer;user-select:none;white-space:nowrap}
+.chip.on{background:#111;color:#fff;border-color:#111}
 .person span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .avatar{width:24px;height:24px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
 .hist-btn{font-size:11.5px;padding:4px 9px;color:var(--purple);border:1px solid #d8d4f5;border-radius:8px;background:var(--purple-bg);cursor:pointer;white-space:nowrap}
@@ -255,7 +260,7 @@ button,input,select,textarea{font-family:inherit}
     </div>
     <div class="tlist">
       <div class="thead">
-        <div>任務名稱</div><div>專案</div><div>負責人</div><div>執行人</div><div>優先</div>
+        <div>任務名稱</div><div>專案</div><div>負責人</div><div>協助者</div><div>優先</div>
         <div>狀態</div><div>截止</div><div>備註／進度</div><div>歷史</div><div></div>
       </div>
       <div id="task-body"><div class="loading">載入中…</div></div>
@@ -289,7 +294,10 @@ button,input,select,textarea{font-family:inherit}
     <div class="row"><label>專案分類</label><input id="t-category" list="dl-cat" placeholder="選擇或輸入"><datalist id="dl-cat"></datalist></div>
     <div class="row"><label>負責人</label><input id="t-member" list="dl-people" placeholder="擔當者"><datalist id="dl-people"></datalist></div>
   </div>
-  <div class="row"><label>執行人</label><input id="t-executor" list="dl-people" placeholder="實際落實者"></div>
+  <div class="row"><label>協助者 <small style="font-weight:400;color:var(--muted)">（可複選，點名字加入／移除）</small></label>
+    <input id="t-executor" list="dl-people" placeholder="點下方名字，或自行輸入（用頓號分隔）">
+    <div id="t-exec-chips" class="chips"></div>
+  </div>
   <div class="row2">
     <div class="row"><label>優先度</label><select id="t-priority"><option>高</option><option selected>中</option><option>低</option></select></div>
     <div class="row"><label>狀態</label><select id="t-status"><option>待處理</option><option>進行中</option><option>完成</option><option>取消/終止</option></select></div>
@@ -297,7 +305,7 @@ button,input,select,textarea{font-family:inherit}
   <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
   <div class="row"><label>備註／進度說明</label><textarea id="t-note" placeholder="目前進度或補充"></textarea></div>
   <div class="toggle">
-    <div class="toggle-info"><b>📲 LINE 通知負責人 / 執行人</b><small>新增後推播給已綁定 LINE 的人</small></div>
+    <div class="toggle-info"><b>📲 LINE 通知負責人 / 協助者</b><small>新增後推播給已綁定 LINE 的人</small></div>
     <label class="switch"><input type="checkbox" id="t-notify" checked><span class="slider"></span></label>
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('task')">取消</button>
@@ -317,7 +325,7 @@ button,input,select,textarea{font-family:inherit}
 
 <div class="modal-bg" id="modal-member"><div class="modal">
   <h3>新增成員</h3>
-  <div class="row"><label>姓名（要跟任務的負責人 / 執行人一致）</label><input id="mb-name" placeholder="例：阿翔"></div>
+  <div class="row"><label>姓名（要跟任務的負責人 / 協助者一致）</label><input id="mb-name" placeholder="例：阿翔"></div>
   <div class="hint">新增後，請該成員加官方帳號好友，並在 LINE 對話框輸入<b>自己的姓名</b>即可自動完成綁定。</div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('member')">取消</button>
     <button class="btn btn-primary" id="btn-member" onclick="addMember()">新增</button></div>
@@ -354,6 +362,12 @@ const EVENT_BG={'開幕':'#fbe4f1','休假':'#fbf0dc','上市':'#e6f3e8','活動
 
 /* ===== helpers ===== */
 function mc(n){if(!n)return'#7c8493';if(!MC[n])MC[n]=COLORS[ci++%COLORS.length];return MC[n];}
+/* 協助者可以多位，資料庫存成「阿翔、品妤」這種字串 */
+const SEP=/[、,，;；\/]+/;
+function people2arr(v){ return String(v||'').split(SEP).map(x=>x.trim()).filter(Boolean); }
+function arr2people(a){ return [...new Set(a)].join('、'); }
+function hasPerson(v,name){ return people2arr(v).includes(name); }
+
 function avatar(n){if(!n)return'';const c=mc(n);return`<span class="avatar" style="background:${c}1f;color:${c}">${n[0]}</span>`;}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function jsAttr(s){return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
@@ -413,7 +427,12 @@ function updateStats(){
   document.getElementById('s-done').textContent=tasks.filter(t=>t.status==='完成').length;
 }
 function updateFilters(){
-  const people=[...new Set([...tasks.map(t=>t.member),...tasks.map(t=>t.executor),...members.map(m=>m.name)].filter(Boolean))];
+  const people=[...new Set([
+    ...tasks.map(t=>t.member),
+    ...tasks.flatMap(t=>people2arr(t.executor)),
+    ...members.map(m=>m.name)
+  ].filter(Boolean))];
+  drawExecChips(people);
   const cats=[...new Set(tasks.map(t=>t.category).filter(Boolean))];
   const mSel=document.getElementById('f-member');const cm=mSel.value;
   mSel.innerHTML='<option value="">全部成員</option>'+people.map(p=>`<option${p===cm?' selected':''}>${esc(p)}</option>`).join('');
@@ -441,7 +460,7 @@ function getFiltered(){
   const fm=document.getElementById('f-member').value,fc=document.getElementById('f-cat').value;
   const fp=document.getElementById('f-pri').value,fs=document.getElementById('f-status').value;
   const out=tasks.filter(t=>(!q||(t.title||'').toLowerCase().includes(q)||(t.note||'').toLowerCase().includes(q))
-    &&(!fm||t.member===fm||t.executor===fm)&&(!fc||t.category===fc)&&(!fp||t.priority===fp)&&(!fs||t.status===fs));
+    &&(!fm||t.member===fm||hasPerson(t.executor,fm))&&(!fc||t.category===fc)&&(!fp||t.priority===fp)&&(!fs||t.status===fs));
 
   // 排序：未結案的永遠排在前面，結案的（完成／取消）沉到最下面
   const sortBy=(document.getElementById('f-sort')||{}).value||'due_desc';
@@ -470,7 +489,10 @@ function renderList(){
       <div class="cell cell-title"><span class="cell-label">任務</span><input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)"></div>
       <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
       <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<span>${esc(t.member)||'—'}</span></span></div>
-      <div class="cell"><span class="cell-label">執行人</span><span class="person">${avatar(t.executor)}<span>${esc(t.executor)||'—'}</span></span></div>
+      <div class="cell"><span class="cell-label">協助者</span><span class="persons">${
+        people2arr(t.executor).length
+          ? people2arr(t.executor).map(n=>`<span class="person">${avatar(n)}<span>${esc(n)}</span></span>`).join('')
+          : '<span>—</span>'}</span></div>
       <div class="cell"><span class="cell-label">優先</span>${priBadge(t.priority)}</div>
       <div class="cell"><span class="cell-label">狀態</span>${statusSel}</div>
       <div class="cell"><span class="cell-label">截止</span><input class="inp" type="date" value="${toISO(t.due)}" onchange="inlineUpdate('${id}','due',this.value)"></div>
@@ -534,11 +556,13 @@ async function addTask(){
   try{
     await apiPost({action:'addTask',notify:document.getElementById('t-notify').checked,row:{
       title,category:document.getElementById('t-category').value.trim(),
-      member:document.getElementById('t-member').value.trim(),executor:document.getElementById('t-executor').value.trim(),
+      member:document.getElementById('t-member').value.trim(),
+      executor:arr2people(people2arr(document.getElementById('t-executor').value)),
       priority:document.getElementById('t-priority').value,due:document.getElementById('t-due').value,
       status:document.getElementById('t-status').value,note:document.getElementById('t-note').value.trim()
     }});
     closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due'].forEach(i=>document.getElementById(i).value='');
+    document.querySelectorAll('#t-exec-chips .chip').forEach(el=>el.classList.remove('on'));
     document.getElementById('t-notify').checked=true;
     showToast('任務已新增');await loadData();
   }catch(e){
@@ -583,6 +607,28 @@ async function confirmDelete(){
     if(type==='member')members=members.filter(t=>String(t.id)!==String(id));
     pendingDelete=null;closeModal('confirm');showToast('已刪除');updateStats();renderCurrent();}catch(e){showToast('刪除失敗');}
 }
+
+function drawExecChips(people){
+  const box=document.getElementById('t-exec-chips'); if(!box) return;
+  const cur=people2arr(document.getElementById('t-executor').value);
+  box.innerHTML=people.map(n=>
+    `<span class="chip${cur.includes(n)?' on':''}" data-p="${esc(n)}">${esc(n)}</span>`).join('');
+  box.querySelectorAll('[data-p]').forEach(el=>el.onclick=()=>{
+    const inp=document.getElementById('t-executor');
+    const list=people2arr(inp.value);
+    const n=el.dataset.p;
+    inp.value=arr2people(list.includes(n)?list.filter(x=>x!==n):[...list,n]);
+    drawExecChips(people);
+  });
+}
+// 手動打字時，名字按鈕的亮暗跟著更新（只重畫按鈕，不動整個畫面）
+document.addEventListener('input',e=>{
+  if(e.target && e.target.id==='t-executor'){
+    const cur=people2arr(e.target.value);
+    document.querySelectorAll('#t-exec-chips [data-p]')
+      .forEach(el=>el.classList.toggle('on', cur.includes(el.dataset.p)));
+  }
+});
 
 function openModal(t){document.getElementById('modal-'+t).classList.add('open');}
 function closeModal(t){document.getElementById('modal-'+t).classList.remove('open');}
