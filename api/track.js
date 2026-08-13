@@ -43,18 +43,9 @@ async function getMeetings() {
   rows.forEach(m => { m.actions = by[m.id] || []; });
   return rows;
 }
-async function getDocs(kind) {
-  return sql`select id::text, title, to_char(date,'YYYY-MM-DD') as date,
-                    summary, doc_url as "docUrl"
-             from tk_doc where kind=${kind} order by date desc nulls last, id desc`;
-}
 async function getMembers() {
   return sql`select id::text, name, user_id as "userId", notify
              from tk_member order by name`;
-}
-async function getEvents() {
-  return sql`select id::text, title, to_char(date,'YYYY-MM-DD') as date, color, note
-             from tk_event order by date, id`;
 }
 
 export default async function handler(req, res) {
@@ -68,18 +59,12 @@ export default async function handler(req, res) {
       const action = String(req.query.action || 'all');
 
       if (action === 'all') {
-        const [tasks, histories, meetings, analytics, reports, members, events] = await Promise.all([
-          getTasks(), getHistory(), getMeetings(),
-          getDocs('analytics'), getDocs('report'), getMembers(), getEvents(),
+        const [tasks, histories, meetings, members] = await Promise.all([
+          getTasks(), getHistory(), getMeetings(), getMembers(),
         ]);
-        return res.status(200).json({ tasks, histories, meetings, analytics, reports, members, events });
+        return res.status(200).json({ tasks, histories, meetings, members });
       }
-      const map = {
-        getTasks, getHistory, getMeetings, getMembers, getEvents,
-        getAnalytics: () => getDocs('analytics'),
-        getReports:   () => getDocs('report'),
-        getTrainings: () => getDocs('training'),
-      };
+      const map = { getTasks, getHistory, getMeetings, getMembers };
       if (!map[action]) return res.status(400).json({ error: '未知的 action: ' + action });
       return res.status(200).json(await map[action]());
     }
@@ -89,11 +74,14 @@ export default async function handler(req, res) {
       const b = parseBody(req);
       const a = String(b.action || '');
       const row = b.row || {};
+      // 前端有些表單把欄位放在 row 裡，有些直接平放在最外層；兩種都要吃得下
+      const F = (k) => (row && row[k] !== undefined) ? row[k] : b[k];
 
       if (a === 'addTask') {
+        if (!s(F('title'))) return res.status(400).json({ error: '請填任務名稱' });
         const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note)
-          values (${s(row.title)},${s(row.category)},${s(row.member)},${s(row.executor)},
-                  ${s(row.priority) || '中'},${s(row.status) || '待處理'},${d(row.due)},${s(row.note)})
+          values (${s(F('title'))},${s(F('category'))},${s(F('member'))},${s(F('executor'))},
+                  ${s(F('priority')) || '中'},${s(F('status')) || '待處理'},${d(F('due'))},${s(F('note'))})
           returning id::text`;
         return res.status(200).json({ ok: true, id: r[0].id });
       }
@@ -121,8 +109,9 @@ export default async function handler(req, res) {
       }
 
       if (a === 'addMeeting') {
+        if (!s(F('title'))) return res.status(400).json({ error: '請填會議名稱' });
         const r = await sql`insert into tk_meeting (title,date,summary,doc_url)
-          values (${s(row.title)},${d(row.date)},${s(row.summary)},${s(row.docUrl)}) returning id::text`;
+          values (${s(F('title'))},${d(F('date'))},${s(F('summary'))},${s(F('docUrl'))}) returning id::text`;
         const acts = Array.isArray(b.actions) ? b.actions : [];
         let i = 0;
         for (const x of acts) {
@@ -138,15 +127,9 @@ export default async function handler(req, res) {
         return res.status(200).json({ ok: true });
       }
 
-      if (a === 'addAnalytics' || a === 'addReport' || a === 'addTraining') {
-        const kind = a === 'addAnalytics' ? 'analytics' : a === 'addReport' ? 'report' : 'training';
-        const r = await sql`insert into tk_doc (kind,title,date,summary,doc_url)
-          values (${kind},${s(b.title)},${d(b.date)},${s(b.summary)},${s(b.docUrl)}) returning id::text`;
-        return res.status(200).json({ ok: true, id: r[0].id });
-      }
-
       if (a === 'addMember') {
-        const r = await sql`insert into tk_member (name) values (${s(row.name || b.name)}) returning id::text`;
+        if (!s(F('name'))) return res.status(400).json({ error: '請填成員姓名' });
+        const r = await sql`insert into tk_member (name) values (${s(F('name'))}) returning id::text`;
         return res.status(200).json({ ok: true, id: r[0].id });
       }
       if (a === 'updateMember') {
@@ -158,24 +141,6 @@ export default async function handler(req, res) {
       }
       if (a === 'deleteMember') {
         await sql`delete from tk_member where id=${id(b.id)}`;
-        return res.status(200).json({ ok: true });
-      }
-
-      if (a === 'addEvent') {
-        const r = await sql`insert into tk_event (title,date,color,note)
-          values (${s(row.title)},${d(row.date)},${s(row.color)},${s(row.note)}) returning id::text`;
-        return res.status(200).json({ ok: true, id: r[0].id });
-      }
-      if (a === 'updateEvent') {
-        const eid = id(b.id); if (!eid) return res.status(400).json({ error: '缺少 id' });
-        if ('title' in row) await sql`update tk_event set title=${s(row.title)} where id=${eid}`;
-        if ('date'  in row) await sql`update tk_event set date=${d(row.date)}   where id=${eid}`;
-        if ('color' in row) await sql`update tk_event set color=${s(row.color)} where id=${eid}`;
-        if ('note'  in row) await sql`update tk_event set note=${s(row.note)}   where id=${eid}`;
-        return res.status(200).json({ ok: true });
-      }
-      if (a === 'deleteEvent') {
-        await sql`delete from tk_event where id=${id(b.id)}`;
         return res.status(200).json({ ok: true });
       }
 
