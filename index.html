@@ -552,7 +552,7 @@ async function addMeeting(){
   const btn=document.getElementById('btn-meeting');btn.disabled=true;btn.textContent='儲存中…';
   const actions=document.getElementById('m-actions').value.trim().split('\n').filter(Boolean).map(l=>{const mt=l.match(/@(\S+)/);return{text:l.replace(/@\S+/,'').trim(),member:mt?mt[1]:'全員'};});
   try{await apiPost({action:'addMeeting',title,date:document.getElementById('m-date').value||toISO(new Date()),summary:document.getElementById('m-summary').value.trim(),docUrl:document.getElementById('m-docurl').value.trim(),actions});
-    closeModal('meeting');['m-title','m-summary','m-actions','m-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗');}
+    closeModal('meeting');['m-title','m-summary','m-actions','m-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗：'+(e.message||''));}
   btn.disabled=false;btn.textContent='儲存';
 }
 /* ===== inline / history / delete ===== */
