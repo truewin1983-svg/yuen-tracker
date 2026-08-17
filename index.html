@@ -575,12 +575,25 @@ async function addMember(){
 async function updMember(id,field,value){try{const m=members.find(x=>String(x.id)===String(id));if(m)m[field]=value;await apiPost({action:'updateMember',id,row:{[field]:value}});showToast('已更新');}catch(e){showToast('更新失敗');}}
 
 /* ===== add task ===== */
+/* 新增任務後，把 LINE 通知的結果講清楚——
+   之前不管有沒有推成功都只顯示「任務已新增」，所以沒收到也不會有人發現 */
+function notifyMsg(rsp){
+  const n = rsp && rsp.notify;
+  if(!n) return '任務已新增';
+  if(n.ok === false) return '任務已新增，但 LINE 沒送出：' + (n.reason||'原因不明');
+  const sent = n.sent||[], skip = n.skipped||[];
+  if(!sent.length && !skip.length) return '任務已新增' + (n.note ? '（'+n.note+'）' : '');
+  let m = '任務已新增';
+  if(sent.length) m += '，已通知 ' + sent.join('、');
+  if(skip.length) m += '｜未通知：' + skip.map(x=>x.name+'（'+x.why+'）').join('、');
+  return m;
+}
 async function addTask(){
   const title=document.getElementById('t-title').value.trim();
   if(!title){showToast('請填任務名稱');return;}
   const btn=document.getElementById('btn-task');btn.disabled=true;btn.textContent='儲存中…';
   try{
-    await apiPost({action:'addTask',notify:document.getElementById('t-notify').checked,row:{
+    const rsp = await apiPost({action:'addTask',notify:document.getElementById('t-notify').checked,row:{
       title,category:document.getElementById('t-category').value.trim(),
       member:document.getElementById('t-member').value.trim(),
       executor:arr2people(people2arr(document.getElementById('t-executor').value)),
@@ -590,7 +603,7 @@ async function addTask(){
     closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due'].forEach(i=>document.getElementById(i).value='');
     document.querySelectorAll('#t-exec-chips .chip').forEach(el=>el.classList.remove('on'));
     document.getElementById('t-notify').checked=true;
-    showToast('任務已新增');await loadData();
+    showToast(notifyMsg(rsp));await loadData();
   }catch(e){
     showToast('沒收到回應，請按「↻ 重新整理」確認是否已新增，再決定要不要重送');
     await loadData();            // 順便重載，多半會發現其實已經寫進去了
