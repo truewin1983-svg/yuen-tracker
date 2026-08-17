@@ -19,6 +19,62 @@ function parseBody(req) {
   return req.body;
 }
 
+// ── LINE 推播 ──────────────────────────────────────────
+// 註：前端一直有送 notify:true（新增任務視窗那個開關），但後端從來沒有處理，
+//     所以負責人和協助者都收不到通知。此處補上。
+// 需要環境變數 LINE_TOKEN（LINE Official Account 的 Channel access token）
+const SEP = /[、,，\/｜|]+/;
+const people2arr = v => String(v || '').split(SEP).map(x => x.trim()).filter(Boolean);
+
+async function pushLine(uid, text) {
+  const token = (process.env.LINE_TOKEN || '').trim();
+  if (!token || !uid) return false;
+  try {
+    const r = await fetch('https://api.line.me/v2/bot/message/push', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+      body: JSON.stringify({ to: uid, messages: [{ type: 'text', text }] }),
+    });
+    return r.ok;
+  } catch { return false; }
+}
+
+// 通知任務的負責人與協助者。回傳結果讓前端可以顯示「誰收到了、誰沒有」
+async function notifyTask(task, kind) {
+  if (!(process.env.LINE_TOKEN || '').trim()) {
+    return { ok: false, reason: '未設定 LINE_TOKEN 環境變數' };
+  }
+  const owner = s(task.member);
+  const helpers = people2arr(task.executor);
+  const names = [...new Set([owner, ...helpers].filter(Boolean))];
+  if (!names.length) return { ok: true, sent: [], skipped: [], note: '這筆任務沒有指定負責人或協助者' };
+
+  const rows = await sql`select name, user_id, notify from tk_member where name = any(${names})`;
+  const byName = {};
+  rows.forEach(r => { byName[r.name] = r; });
+
+  const sent = [], skipped = [];
+  for (const n of names) {
+    const m = byName[n];
+    if (!m)               { skipped.push({ name: n, why: '成員名冊裡沒有這個人' }); continue; }
+    if (!m.user_id)       { skipped.push({ name: n, why: '還沒綁定 LINE' });        continue; }
+    if (m.notify === false) { skipped.push({ name: n, why: '本人關閉了通知' });      continue; }
+    const role = (n === owner) ? '負責人' : '協助者';
+    const text = `📋 ${kind === 'new' ? '新任務' : '任務有異動'}\n\n`
+      + `${task.title}\n`
+      + `你的角色：${role}\n`
+      + (task.category ? `專案：${task.category}\n` : '')
+      + (task.priority ? `優先度：${task.priority}\n` : '')
+      + (task.due ? `截止：${task.due}\n` : '')
+      + (owner && n !== owner ? `負責人：${owner}\n` : '')
+      + (helpers.length ? `協助者：${helpers.join('、')}\n` : '')
+      + (task.note ? `\n備註：${task.note}` : '');
+    if (await pushLine(m.user_id, text)) sent.push(n);
+    else skipped.push({ name: n, why: 'LINE 推播失敗（可能是額度或 token 問題）' });
+  }
+  return { ok: true, sent, skipped };
+}
+
 // ── 讀取 ────────────────────────────────────────────────
 async function getTasks() {
   return sql`select id::text, title, category, member, executor, priority, status,
@@ -79,11 +135,24 @@ export default async function handler(req, res) {
 
       if (a === 'addTask') {
         if (!s(F('title'))) return res.status(400).json({ error: '請填任務名稱' });
+        const task = {
+          title:    s(F('title')),   category: s(F('category')),
+          member:   s(F('member')),  executor: s(F('executor')),
+          priority: s(F('priority')) || '中',
+          status:   s(F('status'))   || '待處理',
+          due:      d(F('due')),     note:     s(F('note')),
+        };
         const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note)
-          values (${s(F('title'))},${s(F('category'))},${s(F('member'))},${s(F('executor'))},
-                  ${s(F('priority')) || '中'},${s(F('status')) || '待處理'},${d(F('due'))},${s(F('note'))})
+          values (${task.title},${task.category},${task.member},${task.executor},
+                  ${task.priority},${task.status},${task.due},${task.note})
           returning id::text`;
-        return res.status(200).json({ ok: true, id: r[0].id });
+        // 通知失敗不能讓新增跟著失敗——任務已經寫進去了
+        let notify = null;
+        if (bo(b.notify)) {
+          try { notify = await notifyTask(task, 'new'); }
+          catch (e) { notify = { ok: false, reason: String(e.message || e) }; }
+        }
+        return res.status(200).json({ ok: true, id: r[0].id, notify });
       }
       if (a === 'updateTask') {
         const tid = id(b.id); if (!tid) return res.status(400).json({ error: '缺少 id' });
