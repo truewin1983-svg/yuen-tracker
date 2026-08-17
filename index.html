@@ -105,7 +105,14 @@ button,input,select,textarea{font-family:inherit}
 .b-red{background:var(--red-bg);color:var(--red)}
 .b-purple{background:var(--purple-bg);color:var(--purple)}
 .b-cat{background:#eef0f3;color:var(--ink-soft);max-width:100%;overflow:hidden;text-overflow:ellipsis}
+/* 優先度：看起來還是原本的色塊，但其實是可以直接改的下拉 */
+.pri-sel{font-size:11.5px;font-weight:600;padding:3px 8px;border-radius:99px;border:1px solid transparent;
+  cursor:pointer;width:auto;font-family:inherit;appearance:none;-webkit-appearance:none;text-align:center}
+.pri-sel:hover{border-color:currentColor}
+.pri-sel:focus{outline:2px solid var(--brand,#3b6ef0);outline-offset:1px}
 .person{display:flex;align-items:center;gap:6px;min-width:0}
+.exec-cell{cursor:pointer;border-radius:8px;padding:3px 5px;margin:-3px -5px}
+.exec-cell:hover{background:#eef0f3}
 .persons{display:flex;flex-wrap:wrap;gap:4px 8px;min-width:0}
 .chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:7px}
 .chip{font-size:12px;padding:4px 10px;border-radius:999px;border:1px solid var(--line);
@@ -323,6 +330,17 @@ button,input,select,textarea{font-family:inherit}
     <button class="btn btn-primary" id="btn-meeting" onclick="addMeeting()">儲存</button></div>
 </div></div>
 
+<div class="modal-bg" id="modal-exec"><div class="modal">
+  <h3>編輯協助者</h3>
+  <div class="row" style="color:var(--muted);font-size:12.5px" id="exec-task-name"></div>
+  <div class="row"><label>協助者 <small style="font-weight:400;color:var(--muted)">（可複選，點名字加入／移除）</small></label>
+    <input id="e-executor" list="dl-people" placeholder="點下方名字，或自行輸入（用頓號分隔）">
+    <div class="chips" id="e-exec-chips" style="margin-top:8px"></div>
+  </div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('exec')">取消</button>
+    <button class="btn btn-primary" onclick="saveExec()">儲存</button></div>
+</div></div>
+
 <div class="modal-bg" id="modal-member"><div class="modal">
   <h3>新增成員</h3>
   <div class="row"><label>姓名（要跟任務的負責人 / 協助者一致）</label><input id="mb-name" placeholder="例：阿翔"></div>
@@ -372,6 +390,14 @@ function avatar(n){if(!n)return'';const c=mc(n);return`<span class="avatar" styl
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function jsAttr(s){return String(s==null?'':s).replace(/\\/g,'\\\\').replace(/'/g,"\\'");}
 function priBadge(p){const m={'高':'b-red','中':'b-amber','低':'b-green'};return`<span class="badge ${m[p]||'b-amber'}">${p||'中'}</span>`;}
+/* 優先度：外觀維持原本的色塊，但改成 select，點下去就能直接換 */
+const PRI_CLASS={'高':'b-red','中':'b-amber','低':'b-green'};
+function priSelect(t){
+  const cur=t.priority||'中', cls=PRI_CLASS[cur]||'b-amber', id=jsAttr(t.id);
+  return `<select class="sel pri-sel ${cls}" onchange="inlineUpdate('${id}','priority',this.value)">`
+    + ['高','中','低'].map(p=>`<option${p===cur?' selected':''}>${p}</option>`).join('')
+    + `</select>`;
+}
 function fmtDate(d){if(!d)return'';const s=String(d);if(s.includes('T')){const dt=new Date(s);if(!isNaN(dt))return dt.getFullYear()+'/'+String(dt.getMonth()+1).padStart(2,'0')+'/'+String(dt.getDate()).padStart(2,'0');}return s.slice(0,10).replace(/-/g,'/');}
 function toISO(d){if(!d)return'';const s=String(d);if(s.includes('T')){const dt=new Date(s);if(!isNaN(dt))return dt.getFullYear()+'-'+String(dt.getMonth()+1).padStart(2,'0')+'-'+String(dt.getDate()).padStart(2,'0');}return s.slice(0,10).replace(/\//g,'-');}
 function showToast(m){const t=document.getElementById('toast');t.textContent=m;t.classList.add('show');clearTimeout(t._t);t._t=setTimeout(()=>t.classList.remove('show'),2400);}
@@ -488,12 +514,12 @@ function renderList(){
     return `<div class="trow ${done?'done':''}">
       <div class="cell cell-title"><span class="cell-label">任務</span><input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)"></div>
       <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
-      <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<span>${esc(t.member)||'—'}</span></span></div>
-      <div class="cell"><span class="cell-label">協助者</span><span class="persons">${
+      <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<input class="inp" list="dl-people" value="${esc(t.member)}" placeholder="—" onchange="inlineUpdateDeb('${id}','member',this.value)"></span></div>
+      <div class="cell"><span class="cell-label">協助者</span><span class="persons exec-cell" title="點一下編輯協助者" onclick="openExecPicker('${id}')">${
         people2arr(t.executor).length
           ? people2arr(t.executor).map(n=>`<span class="person">${avatar(n)}<span>${esc(n)}</span></span>`).join('')
-          : '<span>—</span>'}</span></div>
-      <div class="cell"><span class="cell-label">優先</span>${priBadge(t.priority)}</div>
+          : '<span style="color:var(--muted)">＋ 指派</span>'}</span></div>
+      <div class="cell"><span class="cell-label">優先</span>${priSelect(t)}</div>
       <div class="cell"><span class="cell-label">狀態</span>${statusSel}</div>
       <div class="cell"><span class="cell-label">截止</span><input class="inp" type="date" value="${toISO(t.due)}" onchange="inlineUpdate('${id}','due',this.value)"></div>
       <div class="cell"><span class="cell-label">備註</span><input class="inp" value="${esc(t.note)}" placeholder="點此編輯…" onchange="inlineUpdateDeb('${id}','note',this.value)"></div>
@@ -609,23 +635,53 @@ async function confirmDelete(){
 }
 
 function drawExecChips(people){
-  const box=document.getElementById('t-exec-chips'); if(!box) return;
-  const cur=people2arr(document.getElementById('t-executor').value);
+  drawChipsInto('t-exec-chips','t-executor',people);
+  drawChipsInto('e-exec-chips','e-executor',people);
+}
+/* 名字按鈕：新增任務和編輯協助者兩個視窗共用同一套 */
+function drawChipsInto(boxId,inputId,people){
+  const box=document.getElementById(boxId), inp=document.getElementById(inputId);
+  if(!box||!inp) return;
+  const cur=people2arr(inp.value);
   box.innerHTML=people.map(n=>
     `<span class="chip${cur.includes(n)?' on':''}" data-p="${esc(n)}">${esc(n)}</span>`).join('');
   box.querySelectorAll('[data-p]').forEach(el=>el.onclick=()=>{
-    const inp=document.getElementById('t-executor');
-    const list=people2arr(inp.value);
-    const n=el.dataset.p;
+    const list=people2arr(inp.value), n=el.dataset.p;
     inp.value=arr2people(list.includes(n)?list.filter(x=>x!==n):[...list,n]);
-    drawExecChips(people);
+    drawChipsInto(boxId,inputId,people);
   });
+}
+/* 目前可指派的人：成員名冊 ＋ 既有任務上出現過的名字 */
+function allPeople(){
+  return [...new Set([
+    ...tasks.map(t=>t.member),
+    ...tasks.flatMap(t=>people2arr(t.executor)),
+    ...members.map(m=>m.name)
+  ].filter(Boolean))];
+}
+let curExecId=null;
+function openExecPicker(id){
+  const t=tasks.find(x=>String(x.id)===String(id)); if(!t) return;
+  curExecId=id;
+  document.getElementById('exec-task-name').textContent=t.title||'';
+  document.getElementById('e-executor').value=t.executor||'';
+  drawChipsInto('e-exec-chips','e-executor',allPeople());
+  openModal('exec');
+}
+async function saveExec(){
+  if(!curExecId) return;
+  const v=arr2people(people2arr(document.getElementById('e-executor').value));
+  closeModal('exec');
+  await inlineUpdate(curExecId,'executor',v);
+  curExecId=null;
 }
 // 手動打字時，名字按鈕的亮暗跟著更新（只重畫按鈕，不動整個畫面）
 document.addEventListener('input',e=>{
-  if(e.target && e.target.id==='t-executor'){
+  const map={'t-executor':'t-exec-chips','e-executor':'e-exec-chips'};
+  const box=e.target && map[e.target.id];
+  if(box){
     const cur=people2arr(e.target.value);
-    document.querySelectorAll('#t-exec-chips [data-p]')
+    document.querySelectorAll('#'+box+' [data-p]')
       .forEach(el=>el.classList.toggle('on', cur.includes(el.dataset.p)));
   }
 });
