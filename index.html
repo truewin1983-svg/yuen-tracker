@@ -138,7 +138,7 @@ button,input,select,textarea{font-family:inherit}
   .inp:hover,.sel:hover{background:#eef0f3}
 }
 
-/* ---------- generic cards (meetings/training/etc) ---------- */
+/* ---------- generic cards ---------- */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:15px 17px;margin-bottom:10px;box-shadow:var(--shadow)}
 .card-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap}
 .card-title{font-size:15px;font-weight:700}
@@ -235,7 +235,6 @@ button,input,select,textarea{font-family:inherit}
 <div class="tabwrap">
   <div class="tabs" id="tabs">
     <button class="tab active" data-tab="list" onclick="switchTab('list',this)">任務清單</button>
-    <button class="tab" data-tab="meetings" onclick="switchTab('meetings',this)">會議記錄</button>
     <button class="tab" data-tab="members" onclick="switchTab('members',this)">成員 · LINE</button>
   </div>
 </div>
@@ -275,12 +274,6 @@ button,input,select,textarea{font-family:inherit}
   </div>
 
   <!-- ====== TARGETS ====== -->
-  <!-- ====== MEETINGS ====== -->
-  <div id="tab-meetings" class="section">
-    <div class="toolbar"><div style="font-size:15px;font-weight:700">會議記錄</div>
-      <button class="btn btn-sm btn-primary" onclick="openModal('meeting')">+ 會議記錄</button></div>
-    <div id="meetings-body"><div class="loading">載入中…</div></div>
-  </div>
 
   <!-- ====== ANALYTICS ====== -->
   <!-- ====== MEMBERS ====== -->
@@ -317,17 +310,6 @@ button,input,select,textarea{font-family:inherit}
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('task')">取消</button>
     <button class="btn btn-primary" id="btn-task" onclick="addTask()">新增</button></div>
-</div></div>
-
-<div class="modal-bg" id="modal-meeting"><div class="modal">
-  <h3>新增會議記錄</h3>
-  <div class="row"><label>會議名稱</label><input id="m-title" placeholder="例：樂華店開幕籌備會"></div>
-  <div class="row2"><div class="row"><label>日期</label><input id="m-date" type="date"></div>
-    <div class="row"><label>Google 文件網址</label><input id="m-docurl" placeholder="https://docs.google.com/…"></div></div>
-  <div class="row"><label>摘要</label><textarea id="m-summary" placeholder="會議重點"></textarea></div>
-  <div class="row"><label>行動事項（一行一項，格式：事項 @負責人）</label><textarea id="m-actions" placeholder="確認網路安裝 @阿翔&#10;準備開幕物資 @品妤"></textarea></div>
-  <div class="modal-foot"><button class="btn" onclick="closeModal('meeting')">取消</button>
-    <button class="btn btn-primary" id="btn-meeting" onclick="addMeeting()">儲存</button></div>
 </div></div>
 
 <div class="modal-bg" id="modal-exec"><div class="modal">
@@ -371,7 +353,7 @@ button,input,select,textarea{font-family:inherit}
 const API='/api/track';   // 改用 Neon（原本是 Google Apps Script，載入要數十秒）
 
 /* ===== state ===== */
-let tasks=[],meetings=[],histories=[],members=[];
+let tasks=[],histories=[],members=[];
 let currentTab='list',pendingDelete=null,curHistoryId=null,saveTimer={};
 const COLORS=['#1f6feb','#1f7a37','#a5371d','#5b4bc4','#0f766e','#b4670b'];
 const MC={};let ci=0;
@@ -412,7 +394,7 @@ async function apiGet(action){
   return j;
 }
 
-const NO_RETRY_ACTIONS = new Set(['addTask','addMeeting','addMember','addTarget',
+const NO_RETRY_ACTIONS = new Set(['addTask','addMember','addTarget',
   'addHistory']);
 
 async function apiPost(body,retries){
@@ -435,7 +417,7 @@ async function loadData(){
   setStatus('同步中…','loading');
   try{
     const d=await apiGet('all');            // 一次取回全部，只發一個請求
-    tasks=arr(d.tasks); histories=arr(d.histories); meetings=arr(d.meetings);
+    tasks=arr(d.tasks); histories=arr(d.histories);
     members=arr(d.members);
     updateStats();updateFilters();renderCurrent();
     const tm=new Date().toLocaleTimeString('zh-TW',{hour:'2-digit',minute:'2-digit'});
@@ -476,7 +458,7 @@ function switchTab(name,el){
   currentTab=name;renderCurrent();
 }
 function renderCurrent(){
-  ({list:renderList,meetings:renderMeetings,
+  ({list:renderList,
     members:renderMembers}[currentTab]||(()=>{}))();
 }
 
@@ -530,21 +512,6 @@ function renderList(){
 }
 
 /* ===== MEETINGS ===== */
-function renderMeetings(){
-  const el=document.getElementById('meetings-body');
-  if(!meetings.length){el.innerHTML='<div class="empty">尚無會議記錄</div>';return;}
-  el.innerHTML=meetings.map(m=>`<div class="card">
-    <div class="card-head"><div><div class="card-title">${esc(m.title)}</div><div class="card-date">${fmtDate(m.date)}</div></div>
-      ${m.docUrl?docLink(m.docUrl,'開啟會議記錄'):''}</div>
-    ${m.summary?`<div class="card-summary">${esc(m.summary)}</div>`:''}
-    ${(m.actions||[]).length?`<div style="font-size:12px;font-weight:600;color:var(--muted);margin:12px 0 4px">行動事項</div>
-      ${(m.actions||[]).map(a=>{const done=a.done==='TRUE'||a.done===true;return`<div class="action-item">
-        <div class="check ${done?'on':''}" onclick="toggleAction('${jsAttr(a.id)}','${done?'FALSE':'TRUE'}')">${done?'✓':''}</div>
-        <div style="flex:1;${done?'text-decoration:line-through;color:var(--muted)':''}">${esc(a.text)} <span style="color:var(--muted)">${avatar(a.member)} ${esc(a.member)}</span></div>
-      </div>`;}).join('')}`:''}
-  </div>`).join('');
-}
-function docLink(url,label){return `<a class="doc-link" href="${esc(url)}" target="_blank" rel="noopener">📄 ${label}</a>`;}
 /* ===== MEMBERS / LINE ===== */
 function renderMembers(){
   const bound=members.filter(m=>m.userId).length;
@@ -610,18 +577,9 @@ async function addTask(){
   }
   btn.disabled=false;btn.textContent='新增';
 }
-async function addMeeting(){
-  const title=document.getElementById('m-title').value.trim();if(!title){showToast('請填會議名稱');return;}
-  const btn=document.getElementById('btn-meeting');btn.disabled=true;btn.textContent='儲存中…';
-  const actions=document.getElementById('m-actions').value.trim().split('\n').filter(Boolean).map(l=>{const mt=l.match(/@(\S+)/);return{text:l.replace(/@\S+/,'').trim(),member:mt?mt[1]:'全員'};});
-  try{await apiPost({action:'addMeeting',title,date:document.getElementById('m-date').value||toISO(new Date()),summary:document.getElementById('m-summary').value.trim(),docUrl:document.getElementById('m-docurl').value.trim(),actions});
-    closeModal('meeting');['m-title','m-summary','m-actions','m-docurl'].forEach(i=>document.getElementById(i).value='');showToast('已儲存');await loadData();}catch(e){showToast('儲存失敗：'+(e.message||''));}
-  btn.disabled=false;btn.textContent='儲存';
-}
 /* ===== inline / history / delete ===== */
 async function inlineUpdate(id,field,value){try{const t=tasks.find(x=>String(x.id)===String(id));if(t){t[field]=value;updateStats();}await apiPost({action:'updateTask',id,row:{[field]:value}});showToast('已儲存');renderCurrent();}catch(e){showToast('儲存失敗');}}
 function inlineUpdateDeb(id,field,value){if(saveTimer[id+field])clearTimeout(saveTimer[id+field]);saveTimer[id+field]=setTimeout(()=>inlineUpdate(id,field,value),700);}
-async function toggleAction(aid,done){try{await apiPost({action:'toggleAction',actionId:aid,done});await loadData();}catch(e){showToast('更新失敗');}}
 
 function openHistory(id,title){
   curHistoryId=id;document.getElementById('history-title').textContent='修改記錄：'+title;
