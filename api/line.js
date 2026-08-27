@@ -194,6 +194,18 @@ export default async function handler(req, res) {
   // 先記群組。包 try 是因為這件事失敗不該影響成員綁定。
   try { await recordGroups(body); } catch (e) {}
 
+  /* 只把「私訊」轉給 GAS。
+     GAS 那支是成員綁定用的，收到不認得的名字就會回
+     「找不到這個名字…」。綁定本來就該私訊做，
+     在群組裡回這種訊息只是干擾大家。
+     群組事件在上面記完 groupId 就夠了，不需要再轉。 */
+  const events = Array.isArray(body && body.events) ? body.events : [];
+  const dmEvents = events.filter(ev => (ev.source || {}).type === 'user');
+  if (!dmEvents.length) {
+    return res.status(200).send('OK');   // 全是群組事件，不轉給 GAS
+  }
+  body = { ...body, events: dmEvents };
+
   // 確實把訊息轉給 GAS，並等它送出（最多等 8 秒，避免無限卡住）
   // fetch 會自動跟隨 GAS 的 302，所以 GAS 會真的被執行到
   try {
