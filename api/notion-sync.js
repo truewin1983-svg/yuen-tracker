@@ -53,18 +53,17 @@ export const config = { maxDuration: 60 };
       所以對不到的狀態一律「不送 Status」，寧可讓那一格保持原樣，
       也不要整筆更新失敗。回應會列在「Notion 缺選項」提醒你。
 
-   「取消/終止」目前 Notion 沒有對應選項。要處理的話：
-     1. 在 Notion 的 Status 屬性底下、「已完成」那一組新增一個「取消/終止」選項
-     2. 回來把下面那行註解解除
-   在那之前，取消的任務只會更新其他欄位，Status 維持不動。 */
+   ⚠️ 對照表左邊是 tk_task 的值、右邊必須跟 Notion 的選項【一字不差】。
+      名稱打錯的話那一筆會 400，程式會自動改用「不送 Status」重試一次，
+      其他欄位還是會更新，並列在回應的「Notion缺選項」裡提醒你。 */
 const STATUS_MAP = {
   '待處理': '待處理',
   '進行中': '進行中',
   '完成':   '已完成',
   '已完成': '已完成',
-  // '取消/終止': '取消/終止',
-  // '取消':      '取消/終止',
-  // '終止':      '取消/終止',
+  '取消/終止': '已取消',   // Notion 於 2026-09 新增了「已取消」選項
+  '取消':      '已取消',
+  '終止':      '已取消',
 };
 // 這些狀態視為結案。結案的任務【只更新、絕不新建】，見 buildQuery 的說明
 const CLOSED = ['完成', '已完成', '取消/終止', '取消', '終止'];
@@ -215,9 +214,10 @@ export default async function handler(req, res) {
          萬一之後有人改了查詢條件，也不會突然在中控台灌進幾百筆歷史任務。 */
       if (closed && !pageId) { skipped.push({ id: t.id, 標題: t.title }); continue; }
 
-      // 狀態對不到 Notion 選項時，其他欄位照常更新，只是 Status 不動
+      // 對照表裡根本沒有的狀態：propsOf 不會送 Status，先記下來
       if (!STATUS_MAP[String(t.status || '').trim()]) {
-        noOption.push({ id: t.id, 標題: t.title, 狀態: t.status });
+        noOption.push({ id: t.id, 標題: t.title, 狀態: t.status,
+                        原因: '對照表 STATUS_MAP 裡沒有這個狀態' });
       }
 
       const action = closed ? '更新狀態' : (pageId ? '更新' : '新增');
@@ -231,8 +231,20 @@ export default async function handler(req, res) {
             const cur = await notion('/pages/' + pageId, 'GET');
             sources = (cur.properties?.['來源']?.multi_select || []).map(o => o.name);
           }
-          await notion('/pages/' + pageId, 'PATCH',
-            { properties: propsOf(t, false, sources) });
+          const props = propsOf(t, false, sources);
+          try {
+            await notion('/pages/' + pageId, 'PATCH', { properties: props });
+          } catch (e) {
+            /* Notion 的 status 型別不能用 API 新增選項，名稱對不上就是 400。
+               這時候不要整筆放棄——拿掉 Status 再試一次，
+               其他欄位照樣更新，並記下來讓使用者知道要去補選項。 */
+            if (props['Status'] && /status|option|select|not a valid/i.test(String(e.message))) {
+              delete props['Status'];
+              await notion('/pages/' + pageId, 'PATCH', { properties: props });
+              noOption.push({ id: t.id, 標題: t.title, 狀態: t.status,
+                              原因: 'Notion 的 Status 找不到這個選項' });
+            } else throw e;
+          }
         } else {
           const created = await notion('/pages', 'POST', {
             parent: { database_id: dbid },
