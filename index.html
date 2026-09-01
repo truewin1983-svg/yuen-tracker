@@ -304,8 +304,13 @@ button,input,select,textarea{font-family:inherit}
   </div>
   <div class="row2">
     <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
-    <div class="row"><label>上層任務 <small style="font-weight:400;color:var(--muted)">（不選＝主任務）</small></label>
+    <div class="row"><label>上層任務 <small style="font-weight:400;color:var(--muted)">（只列已勾選為主任務的）</small></label>
       <select id="t-parent"></select></div>
+  </div>
+  <div class="row">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:400">
+      <input type="checkbox" id="t-isparent" style="width:auto">
+      <span>把這筆設為<b>主任務</b>（之後其他任務才能掛在它底下）</span></label>
   </div>
   <div class="row"><label>備註／進度說明</label><textarea id="t-note" placeholder="目前進度或補充"></textarea></div>
   <div class="toggle">
@@ -314,6 +319,21 @@ button,input,select,textarea{font-family:inherit}
   </div>
   <div class="modal-foot"><button class="btn" onclick="closeModal('task')">取消</button>
     <button class="btn btn-primary" id="btn-task" onclick="addTask()">新增</button></div>
+</div></div>
+
+<div class="modal-bg" id="modal-hier"><div class="modal">
+  <h3>主子關係</h3>
+  <div class="row" style="color:var(--muted);font-size:12.5px" id="hier-title"></div>
+  <div class="row">
+    <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+      <input type="checkbox" id="h-isparent" style="width:auto"> 設為主任務</label>
+    <small style="color:var(--muted)" id="h-parent-note"></small>
+  </div>
+  <div class="row"><label>上層任務</label>
+    <select id="h-parent"></select>
+    <small style="color:var(--muted)" id="h-child-note"></small></div>
+  <div class="modal-foot"><button class="btn" onclick="closeModal('hier')">取消</button>
+    <button class="btn btn-primary" onclick="saveHier()">儲存</button></div>
 </div></div>
 
 <div class="modal-bg" id="modal-exec"><div class="modal">
@@ -353,12 +373,20 @@ button,input,select,textarea{font-family:inherit}
 <div class="toast" id="toast"></div>
 
 <style>
-  /* 子任務用縮排＋左邊一條線表示從屬。不做 Tree UI，最小修改就好 */
-  .trow.is-sub{margin-left:22px;border-left:3px solid var(--line,#e3dcd1)}
-  .sub-mark{color:var(--muted);margin-right:5px;font-weight:700}
-  .kid-n{font-size:11px;font-weight:700;color:var(--muted);
-         background:rgba(0,0,0,.05);border-radius:99px;padding:1px 7px;margin-left:6px}
-  .parent-sel{max-width:150px}
+  /* ⚠️ 不要用 margin-left 縮排整列。
+     .trow 是 grid，整列位移會讓子任務的欄位跟主任務對不齊，看起來就是一團亂。
+     只縮排「任務名稱」那一格，其他欄位維持對齊，表格才讀得下去。 */
+  .trow.is-sub{background:#fcfcfd}
+  .trow.is-sub .cell-title{padding-left:16px;border-left:3px solid #c9d4e2;margin-left:2px}
+  .trow.is-sub .t-title-input{color:#3d4655}
+  .hier{border:0;background:transparent;cursor:pointer;font:inherit;font-size:11px;
+        font-weight:700;border-radius:99px;padding:2px 8px;margin-left:6px;white-space:nowrap;
+        max-width:130px;overflow:hidden;text-overflow:ellipsis}
+  .hier:hover{filter:brightness(.94)}
+  .hier.p{background:#e6f0ff;color:#2f5fa8}
+  .hier.c{background:#f1f3f5;color:#6b7280}
+  .hier.n{background:transparent;color:#c3c9d2;opacity:0}
+  .trow:hover .hier.n{opacity:1}
 </style>
 <script>
 /* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
@@ -503,46 +531,75 @@ function renderCurrent(){
 }
 
 /* ===== 主任務 / 子任務 ===== */
-/* 誰可以當上層任務：
-   - 不能是自己
-   - 不能是已經有上層的（本身是子任務）→ 只支援兩層
-   - 不能是已完成／取消的
-   - 自己底下已經有子任務的話，自己就不能再變成別人的子任務 */
+/* 誰可以出現在「上層任務」選單：只列有勾選「設為主任務」的。
+   大多數任務沒有父子關係，全部列出來會有幾百筆，根本找不到。
+   已經有子任務的也一併列入，避免旗標被改掉之後既有關係動不了。 */
 const isClosed = t => t.status==='完成' || t.status==='取消/終止';
 const kidsOf   = id => tasks.filter(t=>String(t.parentTaskId)===String(id));
+const truthy   = v => v===true||v==='true'||v==='TRUE'||v===1||v==='1';
 function parentOptions(selfId){
   return tasks.filter(t =>
-    String(t.id)!==String(selfId) && !t.parentTaskId && !isClosed(t));
+    String(t.id)!==String(selfId) && !t.parentTaskId && !isClosed(t)
+    && (truthy(t.isParent) || kidsOf(t.id).length));
 }
-function parentSelect(t){
-  // 自己有子任務就不能再掛給別人，下拉直接鎖住並說明原因
-  if(kidsOf(t.id).length){
-    return `<select class="sel parent-sel" disabled title="這筆底下有子任務，不能再掛到別人底下">
-      <option>— 主任務 —</option></select>`;
+
+// 任務名稱旁邊的小標記，點下去開設定視窗
+function hierChip(t, nKids){
+  const id=jsAttr(t.id);
+  if(t.parentTaskId){
+    const p=tasks.find(x=>String(x.id)===String(t.parentTaskId));
+    return `<button class="hier c" onclick="openHier('${id}')" title="點一下調整主子關係">↳ ${esc((p&&p.title)||'上層任務')}</button>`;
   }
-  const opts = parentOptions(t.id);
-  return `<select class="sel parent-sel" onchange="setParent('${jsAttr(t.id)}',this.value)">
-    <option value="">— 無（主任務）—</option>
-    ${opts.map(p=>`<option value="${jsAttr(p.id)}"${String(t.parentTaskId)===String(p.id)?' selected':''}>${esc(p.title)}</option>`).join('')}
-    ${t.parentTaskId && !opts.some(p=>String(p.id)===String(t.parentTaskId))
-      ? `<option value="${jsAttr(t.parentTaskId)}" selected>${esc((tasks.find(x=>String(x.id)===String(t.parentTaskId))||{}).title||'（已結案的上層）')}</option>` : ''}
-  </select>`;
+  if(truthy(t.isParent) || nKids)
+    return `<button class="hier p" onclick="openHier('${id}')" title="點一下調整主子關係">主${nKids?' ▼'+nKids:''}</button>`;
+  return `<button class="hier n" onclick="openHier('${id}')" title="設定主子關係">⋯</button>`;
 }
-async function setParent(id, val){
+
+let hierId=null;
+function openHier(id){
+  const t=tasks.find(x=>String(x.id)===String(id)); if(!t) return;
+  hierId=id;
+  const nk=kidsOf(id).length;
+  document.getElementById('hier-title').textContent=t.title;
+  const cb=document.getElementById('h-isparent');
+  cb.checked=truthy(t.isParent)||nk>0;
+  // 底下已經有子任務就不能取消勾選，否則那些子任務會變成孤兒關係
+  cb.disabled = nk>0;
+  document.getElementById('h-parent-note').textContent =
+    nk>0 ? `底下已有 ${nk} 個子任務，無法取消` : '勾了才會出現在其他任務的「上層任務」選單裡';
+
+  const sel=document.getElementById('h-parent');
+  const opts=parentOptions(id);
+  const canBeChild = nk===0;
+  sel.disabled=!canBeChild;
+  sel.innerHTML='<option value="">— 無（這是主任務）—</option>'
+    + opts.map(p=>`<option value="${jsAttr(p.id)}"${String(t.parentTaskId)===String(p.id)?' selected':''}>${esc(p.title)}</option>`).join('');
+  document.getElementById('h-child-note').textContent = canBeChild
+    ? (opts.length ? '' : '目前沒有任何主任務。先把某筆任務勾選為主任務。')
+    : '底下已有子任務，不能再掛到別人底下（只支援兩層）';
+  openModal('hier');
+}
+async function saveHier(){
+  if(!hierId) return;
+  const t=tasks.find(x=>String(x.id)===String(hierId));
+  const row={};
+  const wantP=document.getElementById('h-isparent').checked;
+  const wantC=document.getElementById('h-parent').value||null;
+  if(truthy(t.isParent)!==wantP) row.isParent=wantP;
+  if(String(t.parentTaskId||'')!==String(wantC||'')) row.parentTaskId=wantC;
+  if(!Object.keys(row).length){ closeModal('hier'); return; }
   try{
-    // 空字串代表解除父子關係，要送 null 而不是 ''
-    await apiPost({action:'updateTask', id, row:{ parentTaskId: val || null }});
-    const t=tasks.find(x=>String(x.id)===String(id));
-    if(t) t.parentTaskId = val || null;
-    showToast(val?'已設為子任務':'已改為主任務');
-    renderCurrent();
-  }catch(e){ showToast('設定失敗：'+(e.message||'請稍後再試')); await loadData(); }
+    await apiPost({action:'updateTask', id:hierId, row});
+    if('isParent' in row) t.isParent=row.isParent;
+    if('parentTaskId' in row) t.parentTaskId=row.parentTaskId;
+    closeModal('hier'); showToast('已儲存'); renderCurrent();
+  }catch(e){ showToast('儲存失敗：'+(e.message||'請稍後再試')); await loadData(); }
 }
 function fillParentPicker(){
   const sel=document.getElementById('t-parent'); if(!sel) return;
-  const keep=sel.value;
+  const keep=sel.value, opts=parentOptions(null);
   sel.innerHTML='<option value="">— 無（此為主任務）—</option>'
-    + parentOptions(null).map(p=>`<option value="${jsAttr(p.id)}">${esc(p.title)}</option>`).join('');
+    + opts.map(p=>`<option value="${jsAttr(p.id)}">${esc(p.title)}</option>`).join('');
   if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
 }
 
@@ -590,10 +647,9 @@ function renderList(){
     const nKids=kidsOf(t.id).length;
     return `<div class="trow ${done?'done':''} ${t.parentTaskId?'is-sub':''}">
       <div class="cell cell-title"><span class="cell-label">任務</span>
-        ${t.parentTaskId?'<span class="sub-mark">↳</span>':''}
         <input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)">
-        ${nKids?`<span class="kid-n" title="底下有 ${nKids} 個子任務">▼ ${nKids}</span>`:''}</div>
-      <div class="cell"><span class="cell-label">上層</span>${parentSelect(t)}</div>
+        ${hierChip(t, nKids)}</div>
+
       <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
       <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<input class="inp" list="dl-people" value="${esc(t.member)}" placeholder="—" onchange="inlineUpdateDeb('${id}','member',this.value)"></span></div>
       <div class="cell"><span class="cell-label">協助者</span><span class="persons exec-cell" title="點一下編輯協助者" onclick="openExecPicker('${id}')">${
@@ -665,9 +721,11 @@ async function addTask(){
       executor:arr2people(people2arr(document.getElementById('t-executor').value)),
       priority:document.getElementById('t-priority').value,due:document.getElementById('t-due').value,
       status:document.getElementById('t-status').value,note:document.getElementById('t-note').value.trim(),
-      parentTaskId:document.getElementById('t-parent').value||null
+      parentTaskId:document.getElementById('t-parent').value||null,
+      isParent:document.getElementById('t-isparent').checked
     }});
     closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due','t-parent'].forEach(i=>document.getElementById(i).value='');
+    document.getElementById('t-isparent').checked=false;
     document.querySelectorAll('#t-exec-chips .chip').forEach(el=>el.classList.remove('on'));
     document.getElementById('t-notify').checked=true;
     showToast(notifyMsg(rsp));await loadData();
