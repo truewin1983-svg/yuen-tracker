@@ -28,6 +28,16 @@
 //
 // 5. 這支只寫 Notion，不會改 tk_task 的任何業務欄位，
 //    唯一會寫回的是 notion_page_id。
+//
+// 6. 主任務／子任務分成兩階段：先 upsert 全部頁面，再掛 Parent relation。
+//    因為子任務要掛上去，必須先知道「主任務在 Notion 的 page id」，
+//    而 parent_task_id 是 Neon 的 id，兩者完全不同，不能直接拿來用。
+//    分批同步時主任務可能還沒輪到，這種就這一輪跳過、下一輪自動補上——
+//    不會重複建立，也不需要 retry 佇列。
+//
+// ⚠️ 這支是單向的：Neon → Notion。
+//    翔哥／GPT 在 Notion 自己建的任務與子任務不會寫回 Neon，這是刻意的治理規則。
+//    只有進入昱恩追蹤系統的任務，才算公司正式追蹤任務。
 
 import { neon } from '@neondatabase/serverless';
 
@@ -106,6 +116,8 @@ async function loadExisting(dbid) {
       map.set(tid, {
         pageId: pg.id,
         sources: (pg.properties?.['來源']?.multi_select || []).map(o => o.name),
+        // 順便記下目前掛在誰底下，用來判斷 relation 需不需要動
+        parentPage: (pg.properties?.['Parent item']?.relation || [])[0]?.id || null,
       });
     }
     cursor = j.has_more ? j.next_cursor : null;
@@ -136,7 +148,8 @@ export default async function handler(req, res) {
        兩個條件取聯集——狀態在動的、有期限在跑的，都算活著的事。 */
     const tasks = await sql`
       select id::text, title, category, member, priority, status,
-             to_char(due,'YYYY-MM-DD') as due, notion_page_id
+             to_char(due,'YYYY-MM-DD') as due, notion_page_id,
+             parent_task_id::text as parent_id
       from tk_task
       where coalesce(status,'') not in ('完成', '已完成', '取消/終止', '取消', '終止')
         and (status = '進行中' or due is not null)
@@ -152,6 +165,7 @@ export default async function handler(req, res) {
         其中還沒同步: pending,
         這次會處理: Math.min(limit, tasks.length),
         大約要跑幾輪: Math.ceil(tasks.length / limit),
+        其中是子任務: tasks.filter(t => t.parent_id).length,
         前十筆預覽: tasks.slice(0, 10).map(t => ({
           id: t.id, 標題: t.title,
           動作: t.notion_page_id ? '更新' : '新增',
@@ -191,10 +205,47 @@ export default async function handler(req, res) {
         if (t.notion_page_id !== pageId) {
           await sql`update tk_task set notion_page_id=${pageId} where id=${Number(t.id)}`;
         }
-        done.push({ id: t.id, 標題: t.title, 動作: action });
+        done.push({ id: t.id, 標題: t.title, 動作: action, pageId });
       } catch (e) {
         failed.push({ id: t.id, 標題: t.title, 原因: String(e.message || e) });
       }
+      await sleep(GAP_MS);
+    }
+
+    /* ── 第二階段：掛 Parent relation ─────────────────────
+       只處理「父子雙方都已經有 notion_page_id」的關係。
+       主任務還沒同步到的，這輪跳過，下一輪自然補上。
+
+       Notion 的 relation 是雙向的：設定子任務的 Parent item，
+       Notion 會自動更新主任務的 Sub-item，只需要寫一邊。
+
+       每次同步都重掛一次是刻意的——這樣在昱恩系統改過父子關係、
+       或上一輪沒掛成功的，都會被修正回來。寫入同樣的值不會產生副作用。 */
+    const pageOf = new Map();
+    tasks.forEach(t => { if (t.notion_page_id) pageOf.set(String(t.id), t.notion_page_id); });
+    done.forEach(d => { if (d.pageId) pageOf.set(String(d.id), d.pageId); });
+
+    const rel = { 已掛上: 0, 已解除: 0, 不用動: 0, 等主任務: 0, 失敗: 0 };
+    for (const t of batch) {
+      const childPage = pageOf.get(String(t.id));
+      if (!childPage) continue;
+      // parent_id 是 Neon 的 id，要先換成 Notion 的 page id，不能直接拿來用
+      const wantPage = t.parent_id ? pageOf.get(String(t.parent_id)) : null;
+      if (t.parent_id && !wantPage) { rel.等主任務++; continue; }
+
+      /* 現況跟目標一樣就不要打這個請求。
+         大部分任務都是沒有父任務的主任務，每筆都送一次「清空」等於白白
+         多打幾十個請求，在 Notion 每秒 3 次的限制下會讓同步時間直接加倍。 */
+      const nowPage = existing.get(String(t.id))?.parentPage ?? null;
+      const isNew   = !t.notion_page_id && !existing.has(String(t.id));
+      if ((isNew ? null : nowPage) === wantPage) { rel.不用動++; continue; }
+
+      try {
+        await notion('/pages/' + childPage, 'PATCH', {
+          properties: { 'Parent item': { relation: wantPage ? [{ id: wantPage }] : [] } },
+        });
+        if (wantPage) rel.已掛上++; else rel.已解除++;
+      } catch (e) { rel.失敗++; }
       await sleep(GAP_MS);
     }
 
@@ -205,8 +256,11 @@ export default async function handler(req, res) {
       成功: done.length,
       失敗: failed.length,
       還沒同步的剩下: Math.max(0, left),
-      下一步: left > 0 ? '再按一次同一個網址，會接著處理下一批' : '✅ 全部完成',
-      明細: done,
+      主子關係: rel,
+      下一步: (left > 0 || rel.等主任務 > 0)
+        ? '再按一次同一個網址，會接著處理下一批／補上還沒掛好的主子關係'
+        : '✅ 全部完成',
+      明細: done.map(d => ({ id: d.id, 標題: d.標題, 動作: d.動作 })),
       失敗明細: failed,
     });
   } catch (e) {
