@@ -352,6 +352,29 @@ button,input,select,textarea{font-family:inherit}
 /* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
 const API='/api/track';   // 改用 Neon（原本是 Google Apps Script，載入要數十秒）
 
+/* ── API 通行碼 ────────────────────────────────────────
+   ⚠️ 密鑰不能寫死在這裡。這是公開的靜態網頁，任何人按 F12 就看得到，
+      寫進來等於沒鎖。改成第一次使用時請本人輸入，存在自己的瀏覽器 localStorage。
+   ⚠️ 伺服器端要等 api/track.js 也改好才會真的檢查；
+      在那之前這個 header 送過去只是被忽略，功能完全不受影響。 */
+const KEY_STORE = 'yuen_track_key';
+function trackKey(){
+  let k = localStorage.getItem(KEY_STORE);
+  if(!k){
+    k = (prompt('請輸入追蹤工具通行碼') || '').trim();
+    if(k) localStorage.setItem(KEY_STORE, k);
+  }
+  return k || '';
+}
+// 打錯的話要能清掉重問，否則會一直卡在同一組錯的通行碼上
+function clearTrackKey(){ localStorage.removeItem(KEY_STORE); }
+// 伺服器回 401 時自動清掉並重新整理，使用者不必知道 localStorage 是什麼
+function onAuthFail(){
+  clearTrackKey();
+  alert('通行碼不正確，請重新輸入。');
+  location.reload();
+}
+
 /* ===== state ===== */
 let tasks=[],histories=[],members=[];
 let currentTab='list',pendingDelete=null,curHistoryId=null,saveTimer={};
@@ -388,7 +411,9 @@ function setStatus(m,s){document.getElementById('sync-text').textContent=m;docum
 /* ===== API ===== */
 // 讀取：直接打自家 API（Neon），不再需要 JSONP
 async function apiGet(action){
-  const r=await fetch(API+'?action='+encodeURIComponent(action),{cache:'no-store'});
+  const r=await fetch(API+'?action='+encodeURIComponent(action),
+    {cache:'no-store', headers:{'x-track-key': trackKey()}});
+  if(r.status===401){ onAuthFail(); throw new Error('通行碼不正確'); }
   const j=await r.json();
   if(j&&j.error)throw new Error(j.error);
   return j;
@@ -403,7 +428,10 @@ async function apiPost(body,retries){
   let lastErr;
   for(let i=0;i<=retries;i++){
     try{
-      const r=await fetch(API,{method:'POST',body:JSON.stringify(body),headers:{'Content-Type':'application/json'}});
+      const r=await fetch(API,{method:'POST',body:JSON.stringify(body),
+        headers:{'Content-Type':'application/json','x-track-key': trackKey()}});
+      // 401 不要重試——重試幾次結果都一樣，只是拖慢畫面
+      if(r.status===401){ onAuthFail(); throw new Error('通行碼不正確'); }
       const j=await r.json();
       if(j&&j.error)throw new Error(j.error);
       return j;
