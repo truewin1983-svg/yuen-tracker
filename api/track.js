@@ -93,10 +93,41 @@ async function notifyTask(task, kind) {
   return { ok: true, sent, skipped };
 }
 
+/* ── 主任務／子任務的合法性檢查 ────────────────────────────
+   第一版只支援兩層：主任務 → 子任務。不做孫任務。
+   資料庫層已經擋掉「自己是自己的父親」（tk_task_no_self_parent），
+   但兩層限制與循環沒辦法用 check 表達，只能在這裡驗。
+
+   回傳 null 代表合法；回傳字串代表錯誤訊息，呼叫端要拒絕寫入。
+   ⚠️ 不合法時一定要回錯誤，不要默默寫入或默默忽略。 */
+async function checkParent(parentId, selfId) {
+  if (parentId === null || parentId === undefined) return null;   // 解除父子關係，一定合法
+  const pid = id(parentId);
+  if (!pid) return '上層任務的 id 不正確';
+  if (selfId && pid === Number(selfId)) return '不能把任務指定為自己的上層任務';
+
+  const rows = await sql`select id::text, parent_task_id::text as pp
+                         from tk_task where id=${pid} limit 1`;
+  if (!rows.length) return '找不到指定的上層任務（id ' + pid + '）';
+  if (rows[0].pp) return '「' + pid + '」本身已經是別人的子任務，不能再當上層任務（只支援兩層）';
+
+  // 自己底下已經有子任務的話，自己就不能再變成別人的子任務，否則會變三層
+  if (selfId) {
+    const kids = await sql`select count(*)::int as n from tk_task
+                           where parent_task_id=${Number(selfId)}`;
+    if (kids[0].n > 0) return '這筆任務底下已經有子任務，不能再掛到別人底下（只支援兩層）';
+  }
+  return null;
+}
+
 // ── 讀取 ────────────────────────────────────────────────
 async function getTasks() {
+  // ⚠️ 這裡是列舉欄位，加欄位一定要同時改這行，否則前端永遠拿不到
+  // parent_task_id 也轉字串輸出，跟 id 一致——前端全部用字串比對，
+  // 混用 number/string 會出現「看起來一樣卻比不到」的鬼問題
   return sql`select id::text, title, category, member, executor, priority, status,
-                    to_char(due,'YYYY-MM-DD') as due, note
+                    to_char(due,'YYYY-MM-DD') as due, note,
+                    parent_task_id::text as "parentTaskId"
              from tk_task order by
                case status when '待處理' then 0 when '進行中' then 1 else 2 end,
                due nulls last, id desc`;
@@ -165,9 +196,15 @@ export default async function handler(req, res) {
           status:   s(F('status'))   || '待處理',
           due:      d(F('due')),     note:     s(F('note')),
         };
-        const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note)
+        // 階層不合法就整筆拒絕，不要建立出錯誤的父子關係之後再來收拾
+        const pRaw = F('parentTaskId');
+        const bad = await checkParent(pRaw, null);
+        if (bad) return res.status(400).json({ error: bad });
+        const parentId = (pRaw === null || pRaw === undefined || pRaw === '') ? null : id(pRaw);
+
+        const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note,parent_task_id)
           values (${task.title},${task.category},${task.member},${task.executor},
-                  ${task.priority},${task.status},${task.due},${task.note})
+                  ${task.priority},${task.status},${task.due},${task.note},${parentId})
           returning id::text`;
         // 通知失敗不能讓新增跟著失敗——任務已經寫進去了
         let notify = null;
@@ -189,6 +226,16 @@ export default async function handler(req, res) {
         if ('status'   in f) await sql`update tk_task set status=${s(f.status)},     updated_at=now() where id=${tid}`;
         if ('due'      in f) await sql`update tk_task set due=${d(f.due)},           updated_at=now() where id=${tid}`;
         if ('note'     in f) await sql`update tk_task set note=${s(f.note)},         updated_at=now() where id=${tid}`;
+        /* parentTaskId 沿用同樣的 partial update 規則：
+           有送才動，沒送就不要碰原本的值。
+           送 null 代表「解除父子關係，變回主任務」，這是有意義的值，不是沒送。 */
+        if ('parentTaskId' in f) {
+          const bad = await checkParent(f.parentTaskId, tid);
+          if (bad) return res.status(400).json({ error: bad });
+          const pv = (f.parentTaskId === null || f.parentTaskId === undefined || f.parentTaskId === '')
+            ? null : id(f.parentTaskId);
+          await sql`update tk_task set parent_task_id=${pv}, updated_at=now() where id=${tid}`;
+        }
         return res.status(200).json({ ok: true });
       }
       if (a === 'deleteTask') {
