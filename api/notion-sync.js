@@ -190,24 +190,39 @@ export default async function handler(req, res) {
   }
 
   // GET 一律當試跑，避免有人在網址列不小心觸發寫入
-  // GET 一律當試跑，避免有人在網址列不小心觸發寫入
   const dry   = req.method === 'GET' || String(req.query.dry || '') === '1';
   const limit = Math.max(1, Math.min(200, parseInt(req.query.limit, 10) || BATCH));
 
   try {
-    /* 收錄條件：未完成，且（進行中 或 有截止日）。
-       兩個條件取聯集——狀態在動的、有期限在跑的，都算活著的事。 */
+    /* 兩種任務會被撈進來：
+
+       A. 還在跑的：未結案，且（進行中 或 有截止日）→ 可以新建也可以更新
+       B. 已結案的：只撈【已經同步過】的（notion_page_id 不是 null）→ 只更新
+
+       ⚠️ B 那個 notion_page_id is not null 絕對不能拿掉。
+          tk_task 有 310 筆「完成」＋13 筆「取消/終止」，絕大多數從來沒有同步過。
+          少了這個條件，這次修正會在翔哥的中控台一口氣灌進幾百筆歷史任務。
+          目的只是「讓已經在 Notion 上的任務走到正確的最終狀態」，不是補歷史。 */
     const tasks = await sql`
       select id::text, title, category, member, priority, status,
              to_char(due,'YYYY-MM-DD') as due, notion_page_id,
              parent_task_id::text as parent_id
       from tk_task
-      where coalesce(status,'') not in ('完成', '已完成', '取消/終止', '取消', '終止')
-        and (status = '進行中' or due is not null)
+      where (
+              coalesce(status,'') not in ('完成', '已完成', '取消/終止', '取消', '終止')
+              and (status = '進行中' or due is not null)
+            )
+         or (
+              coalesce(status,'') in ('完成', '已完成', '取消/終止', '取消', '終止')
+              and notion_page_id is not null
+            )
       order by (notion_page_id is not null), id`;
     // 排序把「還沒同步的」放前面，重複跑幾次就會逐批做完
 
-    const pending = tasks.filter(t => !t.notion_page_id).length;
+    /* pending 一定要排除結案的，否則「還沒同步的剩下」會把結案任務算進去，
+       數字永遠歸不了零，使用者會一直以為還沒跑完。 */
+    const pending = tasks.filter(t => !t.notion_page_id && !isClosed(t.status)).length;
+    const closing = tasks.filter(t => isClosed(t.status)).length;
 
     if (dry) {
       return res.status(200).json({
