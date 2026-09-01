@@ -78,7 +78,34 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 const typeOf = member => (String(member || '').trim() === '翔哥') ? '翔哥待辦' : '團隊追蹤';
 
 const txt  = v => [{ text: { content: String(v ?? '').slice(0, 2000) } }];
-const sel  = v => { const x = String(v ?? '').trim(); return x ? { name: x } : null; };
+
+/* select 類欄位的既有選項，開頭抓一次。key 是正規化後的字串。
+   ⚠️ Notion 的 select 會依照送進去的字串【自動建立新選項】，
+      所以 tk_task 寫 sandy、Notion 已經有 Sandy 的話，會冒出第二個選項，
+      同一個人在篩選器裡變成兩個。比對時忽略大小寫與空白就能避免。 */
+let OPTIONS = {};                       // { 'Owner': Map(正規化 → 實際選項名) }
+const normKey = v => String(v ?? '').trim().toLowerCase().replace(/\s+/g, '');
+
+async function loadOptions(dbid) {
+  const j = await notion('/databases/' + dbid, 'GET');
+  const out = {};
+  for (const [name, p] of Object.entries(j.properties || {})) {
+    const opts = p.select?.options || p.multi_select?.options;
+    if (!opts) continue;
+    const m = new Map();
+    opts.forEach(o => m.set(normKey(o.name), o.name));
+    out[name] = m;
+  }
+  return out;
+}
+
+// 有對到既有選項就用既有的寫法，沒對到才用原字串（Notion 會建立新選項）
+const sel = (v, prop) => {
+  const x = String(v ?? '').trim();
+  if (!x) return null;
+  const hit = prop && OPTIONS[prop] && OPTIONS[prop].get(normKey(x));
+  return { name: hit || x };
+};
 
 async function notion(path, method, body) {
   const r = await fetch(API + path, {
@@ -107,9 +134,9 @@ function propsOf(t, isNew, existingSources) {
   const st = STATUS_MAP[String(t.status || '').trim()];
   if (st) p['Status'] = { status: { name: st } };
   p['Deadline'] = { date: t.due ? { start: t.due } : null };
-  p['Owner']    = { select: sel(t.member) };
-  p['專案']     = { select: sel(t.category) };
-  p['優先度']   = { select: sel(t.priority) };
+  p['Owner']    = { select: sel(t.member,   'Owner') };
+  p['專案']     = { select: sel(t.category, '專案') };
+  p['優先度']   = { select: sel(t.priority, '優先度') };
 
   if (isNew) {
     p['類型'] = { select: { name: typeOf(t.member) } };
@@ -117,7 +144,7 @@ function propsOf(t, isNew, existingSources) {
   } else {
     // 併進去，不是取代——同一件事可能也由 Sandy 或 GPT 提出過
     const names = new Set([...(existingSources || []), '昱恩系統']);
-    p['來源'] = { multi_select: [...names].map(n => ({ name: n })) };
+    p['來源'] = { multi_select: [...names].map(n => sel(n, '來源')) };
   }
   return p;
 }
@@ -199,6 +226,7 @@ export default async function handler(req, res) {
       });
     }
 
+    OPTIONS = await loadOptions(dbid);      // 先知道 Notion 現有哪些選項，才能對得起來
     const existing = await loadExisting(dbid);
     const batch = tasks.slice(0, limit);
     const done = [], failed = [];
