@@ -110,6 +110,8 @@ async function checkParent(parentId, selfId) {
                          from tk_task where id=${pid} limit 1`;
   if (!rows.length) return '找不到指定的上層任務（id ' + pid + '）';
   if (rows[0].pp) return '「' + pid + '」本身已經是別人的子任務，不能再當上層任務（只支援兩層）';
+  // is_parent 只影響前端選單要不要列出來，後端不強制——
+  // 免得有人在資料庫直接改了旗標，既有的父子關係就變成不合法而動不了
 
   // 自己底下已經有子任務的話，自己就不能再變成別人的子任務，否則會變三層
   if (selfId) {
@@ -127,7 +129,8 @@ async function getTasks() {
   // 混用 number/string 會出現「看起來一樣卻比不到」的鬼問題
   return sql`select id::text, title, category, member, executor, priority, status,
                     to_char(due,'YYYY-MM-DD') as due, note,
-                    parent_task_id::text as "parentTaskId"
+                    parent_task_id::text as "parentTaskId",
+                    coalesce(is_parent,false) as "isParent"
              from tk_task order by
                case status when '待處理' then 0 when '進行中' then 1 else 2 end,
                due nulls last, id desc`;
@@ -202,9 +205,10 @@ export default async function handler(req, res) {
         if (bad) return res.status(400).json({ error: bad });
         const parentId = (pRaw === null || pRaw === undefined || pRaw === '') ? null : id(pRaw);
 
-        const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note,parent_task_id)
+        const r = await sql`insert into tk_task (title,category,member,executor,priority,status,due,note,parent_task_id,is_parent)
           values (${task.title},${task.category},${task.member},${task.executor},
-                  ${task.priority},${task.status},${task.due},${task.note},${parentId})
+                  ${task.priority},${task.status},${task.due},${task.note},${parentId},
+                  ${bo(F('isParent'))})
           returning id::text`;
         // 通知失敗不能讓新增跟著失敗——任務已經寫進去了
         let notify = null;
@@ -229,6 +233,9 @@ export default async function handler(req, res) {
         /* parentTaskId 沿用同樣的 partial update 規則：
            有送才動，沒送就不要碰原本的值。
            送 null 代表「解除父子關係，變回主任務」，這是有意義的值，不是沒送。 */
+        if ('isParent' in f) {
+          await sql`update tk_task set is_parent=${bo(f.isParent)}, updated_at=now() where id=${tid}`;
+        }
         if ('parentTaskId' in f) {
           const bad = await checkParent(f.parentTaskId, tid);
           if (bad) return res.status(400).json({ error: bad });
