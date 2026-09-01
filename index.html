@@ -302,7 +302,11 @@ button,input,select,textarea{font-family:inherit}
     <div class="row"><label>優先度</label><select id="t-priority"><option>高</option><option selected>中</option><option>低</option></select></div>
     <div class="row"><label>狀態</label><select id="t-status"><option>待處理</option><option>進行中</option><option>完成</option><option>取消/終止</option></select></div>
   </div>
-  <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
+  <div class="row2">
+    <div class="row"><label>截止日期</label><input id="t-due" type="date"></div>
+    <div class="row"><label>上層任務 <small style="font-weight:400;color:var(--muted)">（不選＝主任務）</small></label>
+      <select id="t-parent"></select></div>
+  </div>
   <div class="row"><label>備註／進度說明</label><textarea id="t-note" placeholder="目前進度或補充"></textarea></div>
   <div class="toggle">
     <div class="toggle-info"><b>📲 LINE 通知負責人 / 協助者</b><small>新增後推播給已綁定 LINE 的人</small></div>
@@ -348,6 +352,14 @@ button,input,select,textarea{font-family:inherit}
 
 <div class="toast" id="toast"></div>
 
+<style>
+  /* 子任務用縮排＋左邊一條線表示從屬。不做 Tree UI，最小修改就好 */
+  .trow.is-sub{margin-left:22px;border-left:3px solid var(--line,#e3dcd1)}
+  .sub-mark{color:var(--muted);margin-right:5px;font-weight:700}
+  .kid-n{font-size:11px;font-weight:700;color:var(--muted);
+         background:rgba(0,0,0,.05);border-radius:99px;padding:1px 7px;margin-left:6px}
+  .parent-sel{max-width:150px}
+</style>
 <script>
 /* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
 const API='/api/track';   // 改用 Neon（原本是 Google Apps Script，載入要數十秒）
@@ -490,6 +502,50 @@ function renderCurrent(){
     members:renderMembers}[currentTab]||(()=>{}))();
 }
 
+/* ===== 主任務 / 子任務 ===== */
+/* 誰可以當上層任務：
+   - 不能是自己
+   - 不能是已經有上層的（本身是子任務）→ 只支援兩層
+   - 不能是已完成／取消的
+   - 自己底下已經有子任務的話，自己就不能再變成別人的子任務 */
+const isClosed = t => t.status==='完成' || t.status==='取消/終止';
+const kidsOf   = id => tasks.filter(t=>String(t.parentTaskId)===String(id));
+function parentOptions(selfId){
+  return tasks.filter(t =>
+    String(t.id)!==String(selfId) && !t.parentTaskId && !isClosed(t));
+}
+function parentSelect(t){
+  // 自己有子任務就不能再掛給別人，下拉直接鎖住並說明原因
+  if(kidsOf(t.id).length){
+    return `<select class="sel parent-sel" disabled title="這筆底下有子任務，不能再掛到別人底下">
+      <option>— 主任務 —</option></select>`;
+  }
+  const opts = parentOptions(t.id);
+  return `<select class="sel parent-sel" onchange="setParent('${jsAttr(t.id)}',this.value)">
+    <option value="">— 無（主任務）—</option>
+    ${opts.map(p=>`<option value="${jsAttr(p.id)}"${String(t.parentTaskId)===String(p.id)?' selected':''}>${esc(p.title)}</option>`).join('')}
+    ${t.parentTaskId && !opts.some(p=>String(p.id)===String(t.parentTaskId))
+      ? `<option value="${jsAttr(t.parentTaskId)}" selected>${esc((tasks.find(x=>String(x.id)===String(t.parentTaskId))||{}).title||'（已結案的上層）')}</option>` : ''}
+  </select>`;
+}
+async function setParent(id, val){
+  try{
+    // 空字串代表解除父子關係，要送 null 而不是 ''
+    await apiPost({action:'updateTask', id, row:{ parentTaskId: val || null }});
+    const t=tasks.find(x=>String(x.id)===String(id));
+    if(t) t.parentTaskId = val || null;
+    showToast(val?'已設為子任務':'已改為主任務');
+    renderCurrent();
+  }catch(e){ showToast('設定失敗：'+(e.message||'請稍後再試')); await loadData(); }
+}
+function fillParentPicker(){
+  const sel=document.getElementById('t-parent'); if(!sel) return;
+  const keep=sel.value;
+  sel.innerHTML='<option value="">— 無（此為主任務）—</option>'
+    + parentOptions(null).map(p=>`<option value="${jsAttr(p.id)}">${esc(p.title)}</option>`).join('');
+  if([...sel.options].some(o=>o.value===keep)) sel.value=keep;
+}
+
 /* ===== TASK list ===== */
 function getFiltered(){
   const q=(document.getElementById('search').value||'').toLowerCase();
@@ -515,14 +571,29 @@ function getFiltered(){
 }
 function histOf(id){return histories.filter(h=>String(h.taskId)===String(id));}
 function renderList(){
-  const f=getFiltered(),b=document.getElementById('task-body');
-  if(!f.length){b.innerHTML='<div class="empty">沒有符合的任務</div>';return;}
+  const f0=getFiltered(),b=document.getElementById('task-body');
+  if(!f0.length){b.innerHTML='<div class="empty">沒有符合的任務</div>';return;}
+  /* 把子任務排到自己的主任務底下。
+     只重排順序，不動原本的篩選與排序邏輯——主任務之間的順序照舊。
+     主任務被篩掉時，子任務維持原位單獨顯示，不會憑空消失。 */
+  const shown=new Set(f0.map(t=>String(t.id)));
+  const f=[];
+  f0.forEach(t=>{
+    if(t.parentTaskId && shown.has(String(t.parentTaskId))) return;  // 稍後跟著主任務一起排
+    f.push(t);
+    if(!t.parentTaskId) f0.filter(k=>String(k.parentTaskId)===String(t.id)).forEach(k=>f.push(k));
+  });
   b.innerHTML=f.map(t=>{
     const done=t.status==='完成'||t.status==='取消/終止',hc=histOf(t.id).length,id=jsAttr(t.id),tt=jsAttr(t.title);
     const statusSel=`<select class="sel" onchange="inlineUpdate('${id}','status',this.value)">
       ${['待處理','進行中','完成','取消/終止'].map(s=>`<option${t.status===s?' selected':''}>${s}</option>`).join('')}</select>`;
-    return `<div class="trow ${done?'done':''}">
-      <div class="cell cell-title"><span class="cell-label">任務</span><input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)"></div>
+    const nKids=kidsOf(t.id).length;
+    return `<div class="trow ${done?'done':''} ${t.parentTaskId?'is-sub':''}">
+      <div class="cell cell-title"><span class="cell-label">任務</span>
+        ${t.parentTaskId?'<span class="sub-mark">↳</span>':''}
+        <input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)">
+        ${nKids?`<span class="kid-n" title="底下有 ${nKids} 個子任務">▼ ${nKids}</span>`:''}</div>
+      <div class="cell"><span class="cell-label">上層</span>${parentSelect(t)}</div>
       <div class="cell"><span class="cell-label">專案</span>${t.category?`<span class="badge b-cat">${esc(t.category)}</span>`:'<span style="color:var(--muted)">—</span>'}</div>
       <div class="cell"><span class="cell-label">負責人</span><span class="person">${avatar(t.member)}<input class="inp" list="dl-people" value="${esc(t.member)}" placeholder="—" onchange="inlineUpdateDeb('${id}','member',this.value)"></span></div>
       <div class="cell"><span class="cell-label">協助者</span><span class="persons exec-cell" title="點一下編輯協助者" onclick="openExecPicker('${id}')">${
@@ -593,9 +664,10 @@ async function addTask(){
       member:document.getElementById('t-member').value.trim(),
       executor:arr2people(people2arr(document.getElementById('t-executor').value)),
       priority:document.getElementById('t-priority').value,due:document.getElementById('t-due').value,
-      status:document.getElementById('t-status').value,note:document.getElementById('t-note').value.trim()
+      status:document.getElementById('t-status').value,note:document.getElementById('t-note').value.trim(),
+      parentTaskId:document.getElementById('t-parent').value||null
     }});
-    closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due'].forEach(i=>document.getElementById(i).value='');
+    closeModal('task');['t-title','t-category','t-member','t-executor','t-note','t-due','t-parent'].forEach(i=>document.getElementById(i).value='');
     document.querySelectorAll('#t-exec-chips .chip').forEach(el=>el.classList.remove('on'));
     document.getElementById('t-notify').checked=true;
     showToast(notifyMsg(rsp));await loadData();
@@ -685,7 +757,11 @@ document.addEventListener('input',e=>{
   }
 });
 
-function openModal(t){document.getElementById('modal-'+t).classList.add('open');}
+function openModal(t){
+  // 開新增任務視窗時重新產生上層任務清單，剛建的主任務才選得到
+  if(t==='task') fillParentPicker();
+  document.getElementById('modal-'+t).classList.add('open');
+}
 function closeModal(t){document.getElementById('modal-'+t).classList.remove('open');}
 document.querySelectorAll('.modal-bg').forEach(bg=>bg.addEventListener('click',e=>{if(e.target===bg)bg.classList.remove('open');}));
 
