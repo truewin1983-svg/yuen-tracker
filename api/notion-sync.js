@@ -48,6 +48,28 @@ const API = 'https://api.notion.com/v1';
 // Vercel 預設 10 秒不夠跑一批。Hobby 方案最多可以到 60 秒
 export const config = { maxDuration: 60 };
 
+/* tk_task 的狀態字串跟 Notion 的 Status 選項不一樣，必須對照。
+   ⚠️ Notion 的 status 型別【不能透過 API 新增選項】，送不存在的值會直接 400。
+      所以對不到的狀態一律「不送 Status」，寧可讓那一格保持原樣，
+      也不要整筆更新失敗。回應會列在「Notion 缺選項」提醒你。
+
+   「取消/終止」目前 Notion 沒有對應選項。要處理的話：
+     1. 在 Notion 的 Status 屬性底下、「已完成」那一組新增一個「取消/終止」選項
+     2. 回來把下面那行註解解除
+   在那之前，取消的任務只會更新其他欄位，Status 維持不動。 */
+const STATUS_MAP = {
+  '待處理': '待處理',
+  '進行中': '進行中',
+  '完成':   '已完成',
+  '已完成': '已完成',
+  // '取消/終止': '取消/終止',
+  // '取消':      '取消/終止',
+  // '終止':      '取消/終止',
+};
+// 這些狀態視為結案。結案的任務【只更新、絕不新建】，見 buildQuery 的說明
+const CLOSED = ['完成', '已完成', '取消/終止', '取消', '終止'];
+const isClosed = st => CLOSED.includes(String(st || ''));
+
 const BATCH  = 50;    // 一次處理幾筆
 const GAP_MS = 340;   // 每筆之間喘一下，避開 Notion 每秒 3 次的限制
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -81,7 +103,10 @@ function propsOf(t, isNew, existingSources) {
     'Tracker ID': { rich_text: txt(t.id) },
   };
   // 空值也要送出（null），否則在昱恩系統清空的欄位，Notion 這邊會留著舊值
-  p['Status']   = { status: sel(t.status) || { name: '待處理' } };
+  /* 對不到 Notion 選項時整個不送 Status。
+     少更新一格，好過整筆 400 失敗讓其他欄位也寫不進去。 */
+  const st = STATUS_MAP[String(t.status || '').trim()];
+  if (st) p['Status'] = { status: { name: st } };
   p['Deadline'] = { date: t.due ? { start: t.due } : null };
   p['Owner']    = { select: sel(t.member) };
   p['專案']     = { select: sel(t.category) };
@@ -163,12 +188,13 @@ export default async function handler(req, res) {
         模式: '試跑（沒有動到 Notion）',
         符合條件的任務: tasks.length,
         其中還沒同步: pending,
+        已結案待補狀態: closing,
         這次會處理: Math.min(limit, tasks.length),
         大約要跑幾輪: Math.ceil(tasks.length / limit),
         其中是子任務: tasks.filter(t => t.parent_id).length,
         前十筆預覽: tasks.slice(0, 10).map(t => ({
           id: t.id, 標題: t.title,
-          動作: t.notion_page_id ? '更新' : '新增',
+          動作: isClosed(t.status) ? '更新狀態' : (t.notion_page_id ? '更新' : '新增'),
           類型: t.notion_page_id ? '（不變更）' : typeOf(t.member),
         })),
       });
@@ -178,10 +204,23 @@ export default async function handler(req, res) {
     const batch = tasks.slice(0, limit);
     const done = [], failed = [];
 
+    const skipped = [], noOption = [];
+
     for (const t of batch) {
       const hit = existing.get(String(t.id));
       let pageId = t.notion_page_id || (hit && hit.pageId) || null;
-      const action = pageId ? '更新' : '新增';
+      const closed = isClosed(t.status);
+
+      /* 結案的任務【絕對不新建】。SQL 已經擋過一次，這裡是第二道防線——
+         萬一之後有人改了查詢條件，也不會突然在中控台灌進幾百筆歷史任務。 */
+      if (closed && !pageId) { skipped.push({ id: t.id, 標題: t.title }); continue; }
+
+      // 狀態對不到 Notion 選項時，其他欄位照常更新，只是 Status 不動
+      if (!STATUS_MAP[String(t.status || '').trim()]) {
+        noOption.push({ id: t.id, 標題: t.title, 狀態: t.status });
+      }
+
+      const action = closed ? '更新狀態' : (pageId ? '更新' : '新增');
       try {
         if (pageId) {
           /* 「來源」是併進去不是取代，所以更新前一定要知道那頁現在有哪些來源。
@@ -255,6 +294,13 @@ export default async function handler(req, res) {
       這批處理: batch.length,
       成功: done.length,
       失敗: failed.length,
+      ...(skipped.length ? { 跳過_結案且從未同步: skipped.length } : {}),
+      ...(noOption.length ? {
+        'Notion缺選項': `${noOption.length} 筆的狀態在 Notion 找不到對應選項，`
+          + `其他欄位已更新、Status 保持原樣。到 Notion 的 Status 屬性新增選項後，`
+          + `再解除 notion-sync.js 裡 STATUS_MAP 的註解。`,
+        'Notion缺選項明細': noOption.slice(0, 10),
+      } : {}),
       還沒同步的剩下: Math.max(0, left),
       主子關係: rel,
       下一步: (left > 0 || rel.等主任務 > 0)
