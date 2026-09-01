@@ -13,6 +13,24 @@ const d  = v => { const x = s(v); return x ? x.slice(0, 10) : null; };   // YYYY
 const bo = v => (v === true || v === 'TRUE' || v === 'true' || v === 1 || v === '1');
 const id = v => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : null; };
 
+/* ── 身分驗證 ─────────────────────────────────────────
+   這支 API 一直是完全公開的：知道網址就能讀寫、甚至刪光所有任務與成員。
+   主系統的 middleware.js 保護不到這裡（不同 repo、不同網域），所以自己擋。
+
+   密鑰只存在 Vercel 環境變數 TRACK_SECRET，不進 GitHub、不寫在前端。
+   前端 index.html 把它放在 x-track-key header 送過來。
+
+   ⚠️ 沒設定 TRACK_SECRET 時直接放行。這是刻意的：
+      萬一環境變數掉了或新環境忘了設，結果是「回到以前沒鎖的狀態」，
+      而不是「全公司突然打不開追蹤工具、也沒人知道為什麼」。
+      設定與否請以 Vercel 後台為準。 */
+function checkAuth(req) {
+  const want = (process.env.TRACK_SECRET || '').trim();
+  if (!want) return true;                       // 沒設密鑰＝不啟用驗證
+  const got = String(req.headers['x-track-key'] || '').trim();
+  return got === want;
+}
+
 function parseBody(req) {
   if (!req.body) return {};
   if (typeof req.body === 'string') { try { return JSON.parse(req.body); } catch { return {}; } }
@@ -108,6 +126,11 @@ export default async function handler(req, res) {
   try {
     if (!process.env.DATABASE_URL) {
       return res.status(500).json({ error: '尚未設定 DATABASE_URL 環境變數' });
+    }
+
+    // 讀寫都要驗。只擋 GET 不擋 POST 等於沒擋——刪除才是最嚴重的
+    if (!checkAuth(req)) {
+      return res.status(401).json({ error: '通行碼不正確' });
     }
 
     // ── GET：讀取 ──
