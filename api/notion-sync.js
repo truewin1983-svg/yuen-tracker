@@ -411,10 +411,17 @@ export default async function handler(req, res) {
        上一個 bug 能藏三個多月就是因為回應長得一切正常。
        數字要嘛講實話，要嘛不要出現。
 
-       tasks 是這一輪撈到的完整佇列，batch 是這輪處理掉的，
-       相減就是還沒輪到的。waitParent 那幾筆被清回 null 了，
-       下一輪會再被撈出來，所以要加回去。 */
-    const left = Math.max(0, tasks.length - batch.length) + waitParent.length;
+       算法：還沒輪到的（tasks - batch）＋ 下一輪會被重撈的。
+       會被重撈的有兩種，兩種都沒有寫進 notion_synced_at：
+         ① 這輪失敗的（例如 Notion 頁面被封存，PATCH 直接 400）
+         ② 掛不上主任務、被清回 null 的
+       同一筆可能兩者都中（更新成功但關係掛不上又剛好失敗），所以用 Set 去重，
+       不能單純把兩個長度相加。 */
+    const retry = new Set([
+      ...failed.map(f => String(f.id)),
+      ...waitParent.map(String),
+    ]);
+    const left = Math.max(0, tasks.length - batch.length) + retry.size;
 
     /* 給 Vercel log 用的一行摘要。自動排程跑起來之後沒有人會看回應，
        出事時只剩下 log 可以查——所以執行結果一定要留下痕跡。
@@ -452,10 +459,13 @@ export default async function handler(req, res) {
          否則使用者會一直等一個永遠不會出現的 0。 */
       下一步: (left === 0)
         ? '✅ 這一輪已無待同步項目'
-        : (left === waitParent.length)
+        : (waitParent.length && left === waitParent.length)
           ? `剩下的 ${left} 筆都在等主任務同步。若主任務是「待處理且沒截止日」，`
             + `它不在收錄條件內、不會自己出現——請給主任務一個截止日或改成「進行中」。`
-          : `還有 ${left} 筆，再按一次同一個網址會接著處理下一批`,
+          : failed.length
+            ? `還有 ${left} 筆，其中 ${failed.length} 筆這輪失敗了（見「失敗明細」）。`
+              + `失敗的每輪都會重試，原因沒排除就不會歸零。`
+            : `還有 ${left} 筆，再按一次同一個網址會接著處理下一批`,
       明細: done.map(d => ({ id: d.id, 標題: d.標題, 動作: d.動作 })),
       失敗明細: failed,
     });
