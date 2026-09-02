@@ -250,8 +250,10 @@ export default async function handler(req, res) {
     if (dry) {
       return res.status(200).json({
         模式: '試跑（沒有動到 Notion）',
-        符合條件的任務: tasks.length,
-        其中還沒同步: pending,
+        // ⚠️ 這是「待同步」不是「總任務數」。查詢已經濾掉沒有異動的，
+        //    所以收斂之後這個數字應該接近 0，不是 61。看到 0 是正常的。
+        待同步的任務: tasks.length,
+        其中還沒建過頁面: pending,
         已結案待補狀態: closing,
         這次會處理: Math.min(limit, tasks.length),
         大約要跑幾輪: Math.ceil(tasks.length / limit),
@@ -399,7 +401,20 @@ export default async function handler(req, res) {
       } catch (e) { /* 補不到就下次再說，不要讓整批同步失敗 */ }
     }
 
-    const left = pending - done.filter(x => x.動作 === '新增').length;
+    /* ⚠️ 這個數字是「還有幾筆待同步」，不是「還有幾筆沒建過頁面」。
+
+       原本寫的是 pending - 新增筆數，pending 只算「沒有 notion_page_id 的」。
+       在查詢會把全部撈進來的年代這還說得過去；現在查詢只撈有異動的，
+       更新型的任務永遠不列入 pending，這個數字就變成恆等於 0，
+       回應會固定顯示「✅ 全部完成」——實際上還有四十幾筆沒補。
+
+       上一個 bug 能藏三個多月就是因為回應長得一切正常。
+       數字要嘛講實話，要嘛不要出現。
+
+       tasks 是這一輪撈到的完整佇列，batch 是這輪處理掉的，
+       相減就是還沒輪到的。waitParent 那幾筆被清回 null 了，
+       下一輪會再被撈出來，所以要加回去。 */
+    const left = Math.max(0, tasks.length - batch.length) + waitParent.length;
 
     /* 給 Vercel log 用的一行摘要。自動排程跑起來之後沒有人會看回應，
        出事時只剩下 log 可以查——所以執行結果一定要留下痕跡。
@@ -428,11 +443,19 @@ export default async function handler(req, res) {
           + `再解除 notion-sync.js 裡 STATUS_MAP 的註解。`,
         'Notion缺選項明細': noOption.slice(0, 10),
       } : {}),
-      還沒同步的剩下: Math.max(0, left),
+      待同步剩下: left,
+      ...(pending ? { 其中還沒建過頁面: Math.max(0, pending - done.filter(x => x.動作 === '新增').length) } : {}),
       主子關係: rel,
-      下一步: (left > 0 || rel.等主任務 > 0)
-        ? '再按一次同一個網址，會接著處理下一批／補上還沒掛好的主子關係'
-        : '✅ 全部完成',
+      /* ⚠️ 只剩「等主任務」的話，再按幾次都不會變 0。
+         主任務如果是「待處理且沒截止日」，它根本不在收錄條件裡、永遠不會有 Notion 頁面，
+         子任務就會每小時重試一次卡在這。這不是壞掉，但要講清楚，
+         否則使用者會一直等一個永遠不會出現的 0。 */
+      下一步: (left === 0)
+        ? '✅ 這一輪已無待同步項目'
+        : (left === waitParent.length)
+          ? `剩下的 ${left} 筆都在等主任務同步。若主任務是「待處理且沒截止日」，`
+            + `它不在收錄條件內、不會自己出現——請給主任務一個截止日或改成「進行中」。`
+          : `還有 ${left} 筆，再按一次同一個網址會接著處理下一批`,
       明細: done.map(d => ({ id: d.id, 標題: d.標題, 動作: d.動作 })),
       失敗明細: failed,
     });
