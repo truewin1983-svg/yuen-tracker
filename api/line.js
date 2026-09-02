@@ -9,13 +9,48 @@
 //    直接把網址改成昱恩系統的話，綁定功能就會壞掉。
 //    因此改成這支同時做兩件事，兩邊功能都保留。
 import { neon } from '@neondatabase/serverless';
+import crypto from 'node:crypto';
 
 const sql = process.env.DATABASE_URL ? neon(process.env.DATABASE_URL) : null;
+
+/* ⚠️ 一定要關掉 Vercel 的自動 body 解析。
+   LINE 的簽章是拿【原始位元組】做 HMAC，把物件 JSON.stringify 回去
+   位元組不保證一樣（空白、跳脫、數字寫法都可能不同），簽章就永遠對不上。
+   關掉之後 req.body 不存在，改由 readRawBody() 自己讀。 */
+export const config = { api: { bodyParser: false } };
+
+async function readRawBody(req) {
+  if (typeof req.body === 'string') return req.body;
+  const chunks = [];
+  for await (const c of req) chunks.push(typeof c === 'string' ? Buffer.from(c) : c);
+  const raw = Buffer.concat(chunks).toString('utf8');
+  if (raw) return raw;
+  /* 串流是空的代表平台還是先幫我們解析掉了。退回用 req.body 重組，
+     但重組的位元組多半跟原文不同、簽章會失敗——那是刻意的：
+     寧可走到「簽章失敗」那條路留下紀錄，也不要靜靜地放行。 */
+  if (req.body && typeof req.body === 'object') return JSON.stringify(req.body);
+  return '';
+}
+
+/* 回傳 true=驗過、false=驗不過、null=沒設定 secret（不啟用驗證）。
+
+   ⚠️ 沒設 LINE_CHANNEL_SECRET 時不驗，行為跟以前完全一樣。
+      這跟 TRACK_SECRET 是同一套邏輯：環境變數掉了應該退回「以前沒鎖的狀態」，
+      而不是「LINE 功能整個停擺、也沒人知道為什麼」。
+      要開啟驗證，到 LINE Developers → Basic settings → Channel secret 複製過來。 */
+function verifySignature(raw, sig, secret) {
+  if (!secret) return null;
+  if (!sig) return false;
+  const expect = crypto.createHmac('sha256', secret).update(raw, 'utf8').digest('base64');
+  const a = Buffer.from(expect), b = Buffer.from(String(sig));
+  // 長度不同時 timingSafeEqual 會直接拋錯，所以要先比長度
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
 
 /* ⚠️ 這支曾經被上傳到錯的 repo，導致「看起來有改、其實沒生效」查了很久。
    版本號會印在 ?debug=1 那一頁，改版時把日期往後推，
    就能一眼確認眼前這個網址跑的是哪一版。 */
-const LINE_VER = '2026-08-27a';
+const LINE_VER = '2026-09-02a';
 
 let _ready = false;
 async function ensureTable() {
@@ -131,7 +166,8 @@ function debugPage(groups, logs, env) {
         <td>${esc(x.at)}</td>
         <td>${x.source_type === 'group' ? '群組'
               : x.source_type === 'user' ? '私訊'
-              : x.source_type === 'bind' ? '🔗 綁定' : esc(x.source_type)}</td>
+              : x.source_type === 'bind' ? '🔗 綁定'
+              : x.source_type === 'sig'  ? '🔒 簽章' : esc(x.source_type)}</td>
         <td><code>${esc(x.group_id || '—')}</code></td>
         <td>${esc(x.event_type)}</td>
         <td>${esc(x.text || '')}</td></tr>`).join('')
@@ -150,6 +186,7 @@ function debugPage(groups, logs, env) {
 <table>
   <tr><th>網域</th><td><code>${esc(env.host)}</code></td></tr>
   <tr><th>程式版本</th><td><code>${esc(env.ver)}</code></td></tr>
+  <tr><th>簽章驗證</th><td>${env.sig}</td></tr>
   <tr><th>LINE_TOKEN 屬於</th><td>${env.bot.ok
       ? '<b>' + esc(env.bot.msg) + '</b>'
       : '<span style="color:#b3261e">⚠️ ' + esc(env.bot.msg) + '</span>'}</td></tr>
@@ -230,6 +267,18 @@ async function logBind(text) {
   } catch (e) {}
 }
 
+/* 簽章相關的事件也寫進 line_hook_log，?debug=1 那頁才看得到。
+   剛開啟驗證時最需要的就是這個：如果真實的 LINE 流量出現「簽章驗證失敗」，
+   代表 secret 填錯或原始 body 沒讀到，要馬上把環境變數移除並 Redeploy 退回。 */
+async function logSig(text) {
+  if (!sql) return;
+  try {
+    await ensureTable();
+    await sql`insert into line_hook_log (source_type, group_id, event_type, text)
+              values ('sig', null, 'sig', ${String(text).slice(0, 60)})`;
+  } catch (e) {}
+}
+
 async function handleBinding(ev) {
   if (!sql) { await logBind('沒有 DATABASE_URL'); return; }
   if (ev.type !== 'message' || !ev.message || ev.message.type !== 'text') return;
@@ -306,6 +355,10 @@ export default async function handler(req, res) {
         const env = {
           host: String(req.headers.host || '（不明）'),
           ver: LINE_VER,
+          // 一眼看出驗證有沒有真的開啟，不用去翻 Vercel 環境變數
+          sig: (process.env.LINE_CHANNEL_SECRET || '').trim()
+                 ? '<b>已開啟</b>（LINE_CHANNEL_SECRET 已設定）'
+                 : '<span style="color:#b3261e">⚠️ 未開啟 — 任何人都能偽造事件</span>',
           bot: await whoAmI(),
         };
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -319,10 +372,28 @@ export default async function handler(req, res) {
     return;
   }
 
-  let body = req.body;
-  if (typeof body === 'string') {
-    try { body = JSON.parse(body); } catch (e) { body = {}; }
+  const raw = await readRawBody(req);
+  const secret = (process.env.LINE_CHANNEL_SECRET || '').trim();
+  const sigOk = verifySignature(raw, req.headers['x-line-signature'], secret);
+
+  /* 簽章不對就什麼都不做。這是這支最重要的一道防線——
+
+     沒有驗簽章的話，任何知道這個網址的人都能偽造一個
+     { source:{type:'user', userId:'自己'}, message:{text:'翔哥'} } 事件 POST 進來，
+     把自己的 LINE 綁成翔哥，之後所有指派給翔哥的任務通知都會送到他手機上。
+     而且沒有人會發現，因為翔哥本來就不是每則通知都會回應。
+
+     ⚠️ 回 200 不是回 401。LINE 收到非 2xx 會重試，
+        真的被攻擊時回 401 只會讓對方的流量被 LINE 幫忙放大。
+        我們的目的是「不處理」，不是「告訴對方他失敗了」。 */
+  if (sigOk === false) {
+    await logSig('簽章驗證失敗，已拒絕處理（'
+      + (req.headers['x-line-signature'] ? '簽章不符' : '沒有帶 x-line-signature') + '）');
+    return res.status(200).send('OK');
   }
+
+  let body;
+  try { body = JSON.parse(raw || '{}'); } catch (e) { body = {}; }
   if (!body || typeof body !== 'object') body = {};
 
   // 先記群組。包 try 是因為這件事失敗不該影響成員綁定。
