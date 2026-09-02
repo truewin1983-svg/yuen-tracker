@@ -261,6 +261,7 @@ button,input,select,textarea{font-family:inherit}
       <select id="f-member" onchange="renderList()"><option value="">全部成員</option></select>
       <select id="f-cat" onchange="renderList()"><option value="">全部專案</option></select>
       <select id="f-pri" onchange="renderList()"><option value="">全部優先度</option><option>高</option><option>中</option><option>低</option></select>
+      <select id="f-parent" onchange="renderList()"><option value="">全部主任務</option></select>
       <select id="f-status" onchange="renderList()"><option value="">全部狀態</option><option>待處理</option><option>進行中</option><option>完成</option><option>取消/終止</option></select>
       <select id="f-sort" onchange="renderList()"><option value="due_desc">截止日：新→舊</option><option value="due_asc">截止日：舊→新（快到期優先）</option><option value="new">最近新增</option></select>
     </div>
@@ -387,6 +388,12 @@ button,input,select,textarea{font-family:inherit}
   .hier.c{background:#f1f3f5;color:#6b7280}
   .hier.n{background:transparent;color:#c3c9d2;opacity:0}
   .trow:hover .hier.n{opacity:1}
+  .hier-set{border:0;background:transparent;cursor:pointer;font-size:11px;
+            color:#c3c9d2;padding:2px 3px;opacity:0}
+  .trow:hover .hier-set{opacity:1}
+  .hier-set:hover{color:#6b7280}
+  /* 正在篩某一組時，上方下拉給個明顯的顏色，不然使用者會忘記自己開著篩選 */
+  #f-parent:not([data-all]){border-color:#2f5fa8;color:#2f5fa8;font-weight:700}
 </style>
 <script>
 /* ===== CONFIG : 你的 Google Apps Script Web App 網址 ===== */
@@ -514,6 +521,15 @@ function updateFilters(){
   mSel.innerHTML='<option value="">全部成員</option>'+people.map(p=>`<option${p===cm?' selected':''}>${esc(p)}</option>`).join('');
   const cSel=document.getElementById('f-cat');const cc=cSel.value;
   cSel.innerHTML='<option value="">全部專案</option>'+cats.map(c=>`<option${c===cc?' selected':''}>${esc(c)}</option>`).join('');
+  /* 主任務篩選：只列「勾選為主任務」或「底下真的有子任務」的。
+     全部頂層任務都列出來會有幾百筆，找不到。 */
+  const pSel=document.getElementById('f-parent'); const cp=pSel.value;
+  const parents=tasks.filter(t=>!t.parentTaskId && (truthy(t.isParent)||kidsOf(t.id).length));
+  pSel.innerHTML='<option value="">全部主任務</option>'
+    +parents.map(p=>`<option value="${jsAttr(p.id)}"${String(p.id)===String(cp)?' selected':''}>${esc(p.title)}（${kidsOf(p.id).length}）</option>`).join('');
+  // 選單重畫後原本選的主任務如果消失了（例如被刪或取消勾選），要清掉避免篩出空白
+  if(cp && !parents.some(p=>String(p.id)===String(cp))) pSel.value='';
+  pSel.toggleAttribute('data-all', !pSel.value);
   document.getElementById('dl-cat').innerHTML=cats.map(c=>`<option value="${esc(c)}">`).join('');
   document.getElementById('dl-people').innerHTML=people.map(p=>`<option value="${esc(p)}">`).join('');
 }
@@ -543,16 +559,39 @@ function parentOptions(selfId){
     && (truthy(t.isParent) || kidsOf(t.id).length));
 }
 
-// 任務名稱旁邊的小標記，點下去開設定視窗
+/* 任務名稱旁邊的小標記。
+   點標記本身＝篩選出這一整組（主任務＋所有子任務），這是最常用的動作。
+   設定主子關係移到旁邊那顆齒輪，避免兩個功能搶同一次點擊。 */
 function hierChip(t, nKids){
   const id=jsAttr(t.id);
+  const gear=`<button class="hier-set" onclick="event.stopPropagation();openHier('${id}')"
+                title="設定主子關係">⚙</button>`;
   if(t.parentTaskId){
     const p=tasks.find(x=>String(x.id)===String(t.parentTaskId));
-    return `<button class="hier c" onclick="openHier('${id}')" title="點一下調整主子關係">↳ ${esc((p&&p.title)||'上層任務')}</button>`;
+    return `<button class="hier c" onclick="filterTree('${jsAttr(t.parentTaskId)}')"
+      title="只看這一組">↳ ${esc((p&&p.title)||'上層任務')}</button>${gear}`;
   }
   if(truthy(t.isParent) || nKids)
-    return `<button class="hier p" onclick="openHier('${id}')" title="點一下調整主子關係">主${nKids?' ▼'+nKids:''}</button>`;
+    return `<button class="hier p" onclick="filterTree('${id}')"
+      title="只看這一組">主${nKids?' ▼'+nKids:''}</button>${gear}`;
   return `<button class="hier n" onclick="openHier('${id}')" title="設定主子關係">⋯</button>`;
+}
+
+/* 點標記＝把上方那個「主任務」下拉設成它。
+   刻意不做成獨立的篩選狀態——共用同一個下拉，畫面才只有一個真相，
+   使用者也知道要去哪裡取消。 */
+function filterTree(parentId){
+  const sel=document.getElementById('f-parent');
+  if(!sel) return;
+  if(String(sel.value)===String(parentId)){ sel.value=''; showToast('已顯示全部'); }
+  else if([...sel.options].some(o=>o.value===String(parentId))){
+    sel.value=String(parentId);
+    const t=tasks.find(x=>String(x.id)===String(parentId));
+    showToast('只看：'+((t&&t.title)||'這一組'));
+  } else { showToast('這筆還不是主任務'); return; }
+  renderList();
+  // 捲到篩選列讓使用者知道狀態變了。這是錦上添花，不能因為它失敗就中斷
+  try{ sel.scrollIntoView({block:'nearest'}); }catch(e){}
 }
 
 let hierId=null;
@@ -608,7 +647,15 @@ function getFiltered(){
   const q=(document.getElementById('search').value||'').toLowerCase();
   const fm=document.getElementById('f-member').value,fc=document.getElementById('f-cat').value;
   const fp=document.getElementById('f-pri').value,fs=document.getElementById('f-status').value;
-  const out=tasks.filter(t=>(!q||(t.title||'').toLowerCase().includes(q)||(t.note||'').toLowerCase().includes(q))
+  /* 選了主任務時，主任務本身也要留著——只看子任務會看不出整體進度。
+     這個條件跟其他篩選是「且」的關係，可以疊加使用
+     （例如：惠芬 ＋ 管理部作業流程優化 ＋ 待處理）。 */
+  const pSelEl=document.getElementById('f-parent');
+  const fpar=(pSelEl||{}).value||'';
+  if(pSelEl) pSelEl.toggleAttribute('data-all', !fpar);   // 有沒有在篩，顏色要看得出來
+  const inTree=t=>!fpar||String(t.id)===String(fpar)||String(t.parentTaskId)===String(fpar);
+  const out=tasks.filter(t=>inTree(t)
+    &&(!q||(t.title||'').toLowerCase().includes(q)||(t.note||'').toLowerCase().includes(q))
     &&(!fm||t.member===fm||hasPerson(t.executor,fm))&&(!fc||t.category===fc)&&(!fp||t.priority===fp)&&(!fs||t.status===fs));
 
   // 排序：未結案的永遠排在前面，結案的（完成／取消）沉到最下面
