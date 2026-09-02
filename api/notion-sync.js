@@ -209,15 +209,38 @@ export default async function handler(req, res) {
              parent_task_id::text as parent_id
       from tk_task
       where (
-              coalesce(status,'') not in ('完成', '已完成', '取消/終止', '取消', '終止')
-              and (status = '進行中' or due is not null)
+              (
+                coalesce(status,'') not in ('完成', '已完成', '取消/終止', '取消', '終止')
+                and (status = '進行中' or due is not null)
+              )
+              or (
+                coalesce(status,'') in ('完成', '已完成', '取消/終止', '取消', '終止')
+                and notion_page_id is not null
+              )
             )
-         or (
-              coalesce(status,'') in ('完成', '已完成', '取消/終止', '取消', '終止')
-              and notion_page_id is not null
+        and (
+              notion_synced_at is null
+              or updated_at is null
+              or updated_at > notion_synced_at
             )
-      order by (notion_page_id is not null), id`;
-    // 排序把「還沒同步的」放前面，重複跑幾次就會逐批做完
+      order by (notion_page_id is not null), notion_synced_at asc nulls first, id`;
+    /* ⚠️ 上面 A／B 兩個條件一定要用括號包成一組，再 and 後面那段。
+          少了那層括號，or 的優先權會讓「已結案」那一支繞過異動判斷，
+          每小時把三百多筆歷史任務重新撈出來。
+
+       ── 為什麼要有 notion_synced_at 這段 ──
+       原本只有 order by (notion_page_id is not null), id。
+       回填階段沒問題：沒同步的排前面，處理完沉下去，佇列自己會前進。
+       但回填做完之後全部都是 true，排序退化成純 id 遞增，
+       slice(0, limit) 每小時都拿到同一批最舊的，
+       其餘的任務改狀態、改截止日都推不出去，而且回應還是顯示「全部完成」。
+       實測 61 筆已同步、limit=15 → 有 46 筆從此再也沒被更新過。
+
+       現在改成「只撈自上次同步後真的有異動的」。
+       跑完就歸零，不會每小時空轉重推。
+
+       ⚠️ notion_synced_at 不要回填成 now()。保持 null 代表「從沒對過帳」，
+          會被排到最前面做一次完整補推。 */
 
     /* pending 一定要排除結案的，否則「還沒同步的剩下」會把結案任務算進去，
        數字永遠歸不了零，使用者會一直以為還沒跑完。 */
@@ -295,10 +318,19 @@ export default async function handler(req, res) {
           });
           pageId = created.id;
         }
-        // 寫回 page id。這步失敗也不會產生重複，下次靠 Tracker ID 索引認得出來
-        if (t.notion_page_id !== pageId) {
-          await sql`update tk_task set notion_page_id=${pageId} where id=${Number(t.id)}`;
-        }
+        /* 寫回 page id 與同步時間。這步失敗也不會產生重複，
+           下次靠 Tracker ID 索引認得出來。
+
+           ⚠️ notion_synced_at 一定要每次都寫，不能跟 page id 一樣「有變才寫」——
+              這一欄就是「這筆已經對過帳了」的憑據，沒寫的話下一輪又會撈到同一筆。
+
+           ⚠️ 這行只碰 notion_page_id 與 notion_synced_at，不要順手加 updated_at=now()。
+              updated_at 是「業務資料有沒有變」的依據，被同步程式自己蓋掉的話，
+              條件 updated_at > notion_synced_at 會永遠成立，變成無限重推。 */
+        await sql`update tk_task
+                     set notion_page_id  = ${pageId},
+                         notion_synced_at = now()
+                   where id = ${Number(t.id)}`;
         done.push({ id: t.id, 標題: t.title, 動作: action, pageId });
       } catch (e) {
         failed.push({ id: t.id, 標題: t.title, 原因: String(e.message || e) });
@@ -315,17 +347,27 @@ export default async function handler(req, res) {
 
        每次同步都重掛一次是刻意的——這樣在昱恩系統改過父子關係、
        或上一輪沒掛成功的，都會被修正回來。寫入同樣的值不會產生副作用。 */
+    /* ⚠️ 這份對照表一定要先從 existing（Notion 現有頁面）鋪底。
+       以前 tasks 是「所有符合條件的任務」，主任務必定在裡面；
+       現在 tasks 只剩「有異動的」，沒改過的主任務根本不會被撈進來，
+       只靠 tasks + done 的話會查不到它的 page id，
+       子任務就會永遠卡在「等主任務」，關係一輩子掛不上。
+       existing 本來就把整個 Notion 資料庫撈回來了，主任務一定在其中。 */
     const pageOf = new Map();
+    for (const [tid, info] of existing) {
+      if (info.pageId) pageOf.set(String(tid), info.pageId);
+    }
     tasks.forEach(t => { if (t.notion_page_id) pageOf.set(String(t.id), t.notion_page_id); });
     done.forEach(d => { if (d.pageId) pageOf.set(String(d.id), d.pageId); });
 
     const rel = { 已掛上: 0, 已解除: 0, 不用動: 0, 等主任務: 0, 失敗: 0 };
+    const waitParent = [];      // 這輪掛不上、需要下一輪重試的子任務
     for (const t of batch) {
       const childPage = pageOf.get(String(t.id));
       if (!childPage) continue;
       // parent_id 是 Neon 的 id，要先換成 Notion 的 page id，不能直接拿來用
       const wantPage = t.parent_id ? pageOf.get(String(t.parent_id)) : null;
-      if (t.parent_id && !wantPage) { rel.等主任務++; continue; }
+      if (t.parent_id && !wantPage) { rel.等主任務++; waitParent.push(t.id); continue; }
 
       /* 現況跟目標一樣就不要打這個請求。
          大部分任務都是沒有父任務的主任務，每筆都送一次「清空」等於白白
@@ -341,6 +383,20 @@ export default async function handler(req, res) {
         if (wantPage) rel.已掛上++; else rel.已解除++;
       } catch (e) { rel.失敗++; }
       await sleep(GAP_MS);
+    }
+
+    /* 掛不上主任務的，把同步時間清回 null，讓下一輪重新撈到。
+       上面已經把 notion_synced_at 蓋成 now() 了，不清掉的話這筆就此離開佇列，
+       主任務之後才同步好也沒人回頭幫它把關係補上——父子關係會永久遺失。
+       頁面本身已經建好了，重試只是再 PATCH 一次 relation，不會產生重複。
+
+       ⚠️ 只清 notion_synced_at，不要碰 notion_page_id，
+          那一欄是防重複建立的依據，清掉會在 Notion 長出第二頁。 */
+    if (waitParent.length) {
+      try {
+        await sql`update tk_task set notion_synced_at = null
+                   where id = any(${waitParent.map(Number)})`;
+      } catch (e) { /* 補不到就下次再說，不要讓整批同步失敗 */ }
     }
 
     const left = pending - done.filter(x => x.動作 === '新增').length;
