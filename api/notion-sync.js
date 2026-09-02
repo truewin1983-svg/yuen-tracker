@@ -344,6 +344,22 @@ export default async function handler(req, res) {
     }
 
     const left = pending - done.filter(x => x.動作 === '新增').length;
+
+    /* 給 Vercel log 用的一行摘要。自動排程跑起來之後沒有人會看回應，
+       出事時只剩下 log 可以查——所以執行結果一定要留下痕跡。
+       ⚠️ 只印統計數字與第一個錯誤訊息，
+          絕對不要把 TRACK_SECRET / NOTION_TOKEN / DATABASE_URL 印進 log。 */
+    console.log('[notion-sync]', JSON.stringify({
+      at: new Date().toISOString(),
+      batch: batch.length,
+      ok: done.length,
+      fail: failed.length,
+      skippedClosed: skipped.length,
+      left: Math.max(0, left),
+      rel,
+      firstError: failed.length ? String(failed[0].原因 || '').slice(0, 120) : null,
+    }));
+
     return res.status(200).json({
       模式: '實際執行',
       這批處理: batch.length,
