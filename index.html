@@ -378,6 +378,8 @@ button,input,select,textarea{font-family:inherit}
      .trow 是 grid，整列位移會讓子任務的欄位跟主任務對不齊，看起來就是一團亂。
      只縮排「任務名稱」那一格，其他欄位維持對齊，表格才讀得下去。 */
   .trow.is-sub{background:#fcfcfd}
+  /* 主任務被篩掉的子任務：不縮排，但標記淡一點，提示「這一組沒有完整顯示」 */
+  .trow.is-orphan .hier.c{opacity:.62;border-style:dashed}
   .trow.is-sub .cell-title{padding-left:16px;border-left:3px solid #c9d4e2;margin-left:2px}
   .trow.is-sub .t-title-input{color:#3d4655}
   .hier{border:0;background:transparent;cursor:pointer;font:inherit;font-size:11px;
@@ -688,11 +690,17 @@ function renderList(){
     if(!t.parentTaskId) f0.filter(k=>String(k.parentTaskId)===String(t.id)).forEach(k=>f.push(k));
   });
   b.innerHTML=f.map(t=>{
+    /* ⚠️ 只有【主任務也在畫面上】時才縮排。
+       篩選之後主任務常常被濾掉（例如篩「Ivy」，但主任務的負責人是 Neal），
+       這時子任務還縮排的話，會緊貼在上一個不相干的主任務底下，
+       看起來像是它的子任務——分類看起來就跑掉了。
+       孤兒子任務改成一般列，↳上層任務 的標記還在，資訊不會遺失。 */
+    const grouped = t.parentTaskId && shown.has(String(t.parentTaskId));
     const done=t.status==='完成'||t.status==='取消/終止',hc=histOf(t.id).length,id=jsAttr(t.id),tt=jsAttr(t.title);
     const statusSel=`<select class="sel" onchange="inlineUpdate('${id}','status',this.value)">
       ${['待處理','進行中','完成','取消/終止'].map(s=>`<option${t.status===s?' selected':''}>${s}</option>`).join('')}</select>`;
     const nKids=kidsOf(t.id).length;
-    return `<div class="trow ${done?'done':''} ${t.parentTaskId?'is-sub':''}">
+    return `<div class="trow ${done?'done':''} ${grouped?'is-sub':''}${t.parentTaskId&&!grouped?' is-orphan':''}">
       <div class="cell cell-title"><span class="cell-label">任務</span>
         <input class="inp t-title-input" value="${esc(t.title)}" onchange="inlineUpdateDeb('${id}','title',this.value)">
         ${hierChip(t, nKids)}</div>
