@@ -253,6 +253,20 @@ export default async function handler(req, res) {
         await sql`insert into tk_history (task_id, change) values (${id(b.taskId)}, ${s(b.change)})`;
         return res.status(200).json({ ok: true });
       }
+      if (a === 'deleteHistory') {
+        /* ⚠️ 同時比對 id 與 taskId。只靠 id 的話，前端傳錯就會刪到別的任務的紀錄，
+           而且不會有任何錯誤——這個系統出過誤刪事故（DELETE 範例的 id 是佔位值，
+           照著執行刪掉了真實資料）。多一把鑰匙，傳錯就查不到而不是刪錯。
+           ⚠️ Neon Free 方案的 history retention 只有 6 小時，刪掉幾乎救不回來。 */
+        const hid = id(b.id), tid = id(b.taskId);
+        if (!hid) return res.status(400).json({ error: '缺少記錄 id' });
+        if (!tid) return res.status(400).json({ error: '缺少任務 id' });
+        const r = await sql`delete from tk_history
+                             where id = ${hid} and task_id = ${tid}
+                             returning id::text`;
+        if (!r.length) return res.status(404).json({ error: '記錄與任務對不起來，沒有刪除任何資料' });
+        return res.status(200).json({ ok: true });
+      }
 
       if (a === 'addMeeting') {
         if (!s(F('title'))) return res.status(400).json({ error: '請填會議名稱' });
