@@ -212,6 +212,9 @@ button,input,select,textarea{font-family:inherit}
 .history-item{padding:9px 0;border-bottom:1px solid #f1f3f5;font-size:13px}
 .history-item:last-child{border-bottom:none}
 .history-item .d{color:var(--muted);font-size:11px;margin-bottom:2px}
+.hist-del{flex:none;border:1px solid #f0cfc9;background:#fff;color:#c0402f;border-radius:7px;
+  width:24px;height:24px;line-height:1;font-size:13px;cursor:pointer;opacity:.55}
+.hist-del:hover{opacity:1;background:#fbecea}
 
 .hint{font-size:12px;color:var(--ink-soft);background:#f6f7f9;border:1px solid var(--line);border-radius:11px;padding:11px 13px;line-height:1.6;margin-bottom:13px}
 .hint b{color:var(--ink)}
@@ -797,7 +800,15 @@ function inlineUpdateDeb(id,field,value){if(saveTimer[id+field])clearTimeout(sav
 function openHistory(id,title){
   curHistoryId=id;document.getElementById('history-title').textContent='修改記錄：'+title;
   const hs=histOf(id),b=document.getElementById('history-body');
-  b.innerHTML=hs.length?hs.map(h=>`<div class="history-item"><div class="d">${fmtDate(h.date)}</div><div>${esc(h.change)}</div></div>`).join(''):'<div class="empty" style="padding:14px 0">尚無修改記錄</div>';
+  /* 每一筆右邊給一個刪除鈕。以前只能新增不能刪，
+     打錯字或貼錯任務就永遠留在那裡。 */
+  b.innerHTML=hs.length?hs.map(h=>`<div class="history-item" style="display:flex;gap:8px;align-items:flex-start">
+      <div style="flex:1;min-width:0">
+        <div class="d">${fmtDate(h.date)}</div><div>${esc(h.change)}</div>
+      </div>
+      <button class="hist-del" title="刪除這筆記錄"
+        onclick="askDeleteHistory('${jsAttr(h.id)}','${jsAttr(h.change).slice(0,40)}')">✕</button>
+    </div>`).join(''):'<div class="empty" style="padding:14px 0">尚無修改記錄</div>';
   document.getElementById('history-input').value='';openModal('history');
 }
 async function submitHistory(){
@@ -809,6 +820,21 @@ async function submitHistory(){
 }
 
 function askDelete(id,title,type){pendingDelete={id,type};document.getElementById('confirm-title').textContent=title;openModal('confirm');}
+
+/* 刪除修改記錄。用瀏覽器的 confirm 不走 confirm 視窗——
+   那個視窗已經被「刪任務／刪成員」佔用，再塞第三種型別容易搞混，
+   而且刪一行記錄的嚴重度比刪整個任務低很多。 */
+async function askDeleteHistory(hid, preview){
+  if(!confirm(`確定刪除這筆修改記錄？\n\n「${preview}」\n\n刪除後無法復原。`)) return;
+  try{
+    await apiPost({action:'deleteHistory', id:hid, taskId:curHistoryId});
+    showToast('已刪除');
+    await loadData();
+    // 重畫視窗，標題沿用現有的（去掉前綴才不會愈疊愈長）
+    openHistory(curHistoryId, document.getElementById('history-title').textContent.replace('修改記錄：',''));
+    renderCurrent();          // 列表上的「記錄(N)」數字要跟著減
+  }catch(e){ showToast('刪除失敗'); }
+}
 async function confirmDelete(){
   if(!pendingDelete)return;const{id,type}=pendingDelete;
   const actionMap={task:'deleteTask',target:'deleteTask',member:'deleteMember'};
